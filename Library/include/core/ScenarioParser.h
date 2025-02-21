@@ -105,6 +105,13 @@ namespace sf
          */
         virtual bool EvaluateMath(XMLNode* node);
 
+        //! A method that includes content of possibly multiple files inside the processed file.
+        /*!
+         \param node a pointer to a node
+         \return success
+         */
+        virtual bool IncludeFiles(XMLNode* node);
+
         //! A method used to parse solver configuration.
         /*!
          \param element a pointer to the XML node
@@ -266,6 +273,8 @@ namespace sf
         */
         virtual FixedJoint* ParseGlue(XMLElement* element);
         
+        
+        virtual bool ParseTether(XMLElement* element);
         //! A method to get the full file path depending on the format of the passed string.
         /*!
          \param path a file path candidate

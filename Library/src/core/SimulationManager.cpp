@@ -92,6 +92,7 @@ SimulationManager::SimulationManager(Scalar stepsPerSecond, SolverType st, Colli
     angSleepThreshold = Scalar(0);
     fdCounter = 0;
     currentTime = 0;
+    timeOffset = 0;
     simulationTime = 0;
     mlcpFallbacks = 0;
     dynamicsWorld = nullptr;
@@ -177,14 +178,42 @@ void SimulationManager::AddSolidEntity(SolidEntity* ent, const Transform& origin
     }
 }
 
- void SimulationManager::AddFeatherstoneEntity(FeatherstoneEntity* ent, const Transform& origin)
- {
-     if(ent != nullptr)
-     {
-         entities.push_back(ent);
-         ent->AddToSimulation(this, origin);
-     }
- }
+void SimulationManager::RemoveSolidEntity(SolidEntity* ent)
+{
+    if(ent != nullptr)
+    {
+        auto it = std::find(entities.begin(), entities.end(), ent);
+        if(it != entities.end() && (*it)->getType() == EntityType::SOLID)
+        {
+            SolidEntity* solid = static_cast<SolidEntity*>(*it);
+            solid->RemoveFromSimulation(this);
+            entities.erase(it);
+        }
+    }
+}
+
+void SimulationManager::AddFeatherstoneEntity(FeatherstoneEntity* ent, const Transform& origin)
+{
+    if(ent != nullptr)
+    {
+        entities.push_back(ent);
+        ent->AddToSimulation(this, origin);
+    }
+}
+
+void SimulationManager::RemoveFeatherstoneEntity(FeatherstoneEntity* ent)
+{
+    if(ent != nullptr)
+    {
+        auto it = std::find(entities.begin(), entities.end(), ent);
+        if(it != entities.end() && (*it)->getType() == EntityType::FEATHERSTONE)
+        {
+            FeatherstoneEntity* fe = static_cast<FeatherstoneEntity*>(*it);
+            fe->RemoveFromSimulation(this);
+            entities.erase(it);
+        }
+    }
+}
     
 void SimulationManager::EnableOcean(Scalar waves, Fluid f)
 {
@@ -497,11 +526,17 @@ bool SimulationManager::isSimulationFresh() const
     return simulationFresh;
 }
 
-Scalar SimulationManager::getSimulationTime() const
+Scalar SimulationManager::getSimulationTime(bool applyOffset) const
 {
+    // Thread safe access to simulation time
     SDL_LockMutex(simInfoMutex);
     Scalar st = simulationTime;
     SDL_UnlockMutex(simInfoMutex);
+    
+    // Apply time offset in seconds
+    if(applyOffset)
+        st += timeOffset/(Scalar)1e6;
+
     return st;
 }
 
@@ -544,10 +579,16 @@ void SimulationManager::setStepsPerSecond(Scalar steps)
     SDL_LockMutex(simSettingsMutex);
     sps = steps;
     ssus = (uint64_t)(1000000.0/steps);
-    fdPrescaler = (unsigned int)round(sps/Scalar(50));
-    fdPrescaler = fdPrescaler == 0 ? 1 : fdPrescaler;
-    //fdPrescaler = 1; //TESTING
+    setFluidDynamicsPrescaler((unsigned int)round(sps/Scalar(50)));
     SDL_UnlockMutex(simSettingsMutex);
+}
+
+void SimulationManager::setFluidDynamicsPrescaler(unsigned int presc)
+{
+    if(presc == 0)
+        fdPrescaler = 1;
+    else
+        fdPrescaler = presc;
 }
 
 void SimulationManager::setRealtimeFactor(Scalar f)
@@ -1013,7 +1054,9 @@ void SimulationManager::AdvanceSimulation()
     if(currentTime == 0) //Start of simulation
     {
         deltaTime = 0.0;
+        simulationTime = 0.0;
         currentTime = getSimulationClock();
+        timeOffset = currentTime;
         return;
     }
 
