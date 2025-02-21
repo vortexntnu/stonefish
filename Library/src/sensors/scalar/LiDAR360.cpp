@@ -144,7 +144,7 @@ void LiDAR360::setNoise(Scalar rangeStdDev)
         channels[i].setStdDev(rangeStdDev);
 }
 
-ScalarSensorType LiDAR360::getScalarSensorType()
+ScalarSensorType LiDAR360::getScalarSensorType() const
 {
     return ScalarSensorType::LiDAR360;
 }
