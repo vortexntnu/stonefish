@@ -3701,35 +3701,38 @@ Sensor* ScenarioParser::ParseSensor(XMLElement* element, const std::string& name
         }
         sens = mult;
     }
-        else if(typeStr == "lidar360")
+    else if(typeStr == "lidar360")
     {
         int history;
-        int steps;
-        if((item = element->FirstChildElement("history")) == nullptr || item->QueryAttribute("samples", &history) != XML_SUCCESS)
+        int resolution;
+        int layers = 1; // Default: 1 vertical channel (current behavior)
+        if((item = element->FirstChildElement("history")) == nullptr ||
+        item->QueryAttribute("samples", &history) != XML_SUCCESS)
             history = -1;
-        if((item = element->FirstChildElement("specs")) == nullptr || item->QueryAttribute("steps", &steps) != XML_SUCCESS)
+        if((item = element->FirstChildElement("specs")) == nullptr ||
+        item->QueryAttribute("resolution", &resolution) != XML_SUCCESS)
             return nullptr;
-            
-        LiDAR360* lidar = new LiDAR360(sensorName, steps, rate, history);
-        
-        //Optional range definition
+        // New parameter: number of vertical layers
+        item->QueryAttribute("layers", &layers); // if not specified, remains 1
+
+        // Create sensor with extra parameters
+        LiDAR360* lidar = new LiDAR360(sensorName, resolution, layers, rate, history);
+
+        // Optional range and noise definitions remain as before...
         if((item = element->FirstChildElement("range")) != nullptr)    
         {
             Scalar distMin(0);
             Scalar distMax(BT_LARGE_FLOAT);
             int c = 0;
-
-            if(item->QueryAttribute("distance_min", &distMin) == XML_SUCCESS)
+            if(item->QueryAttribute("range_min", &distMin) == XML_SUCCESS)
                 ++c;
-            if(item->QueryAttribute("distance_max", &distMax) == XML_SUCCESS)
+            if(item->QueryAttribute("range_max", &distMax) == XML_SUCCESS)
                 ++c;
-            
-            if(c == 0)
-                log.Print(MessageType::WARNING, "Range of sensor '%s' not properly defined - using defaults.", sensorName.c_str());
-            else
+            if(c != 0)
                 lidar->setRange(distMin, distMax);
+            else
+                log.Print(MessageType::WARNING, "Range of sensor '%s' not properly defined - using defaults.", sensorName.c_str());
         }
-        //Optional noise definition
         if((item = element->FirstChildElement("noise")) != nullptr)    
         {
             Scalar distance;

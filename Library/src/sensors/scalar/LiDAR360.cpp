@@ -36,91 +36,148 @@
 #include "sensors/Sample.h"
 #include "graphics/OpenGLPipeline.h"
 
+#include <iostream>
+#include <ostream>
+
+
 namespace sf
 {
 
-LiDAR360::LiDAR360(std::string uniqueName, unsigned int angleSteps, Scalar frequency, int historyLength) : LinkSensor(uniqueName, frequency, historyLength)
+LiDAR360::LiDAR360(std::string uniqueName, unsigned int resolution, unsigned int layers, Scalar frequency, int historyLength) : LinkSensor(uniqueName, frequency, historyLength)
 {
-    Scalar angRange = UnitSystem::Angle(true, 45);
-    angSteps = angleSteps;
-    currentAngStep = 0;
+    ang_range_hori_ = UnitSystem::Angle(true, 360);
+    ang_range_vert_ = UnitSystem::Angle(true, 42.4);
+
+    resolution_ = resolution;
+    layers_ = layers;
+
+    channels.push_back(SensorChannel("Distance", QuantityType::LENGTH));
+    channels.back().rangeMin = Scalar(0);
+    channels.back().rangeMax = BT_LARGE_FLOAT;
     
-    for(unsigned int i=0; i <= angSteps; ++i)
+    // Precompute horizontal angles (size: resolution_+1)
+    for (unsigned int i = 0; i < resolution_; ++i)
     {
-        angles.push_back(i/(Scalar)angSteps * angRange - Scalar(0.5) * angRange);
-    
-        channels.push_back(SensorChannel("Distance", QuantityType::LENGTH));
-        channels.back().rangeMin = Scalar(0);
-        channels.back().rangeMax = BT_LARGE_FLOAT;
+        // Map [0, resolution_] to [-180°, +180°] (in radians)
+        angles_hori_.push_back(i / (Scalar)resolution_ * ang_range_hori_ - Scalar(0.5) * ang_range_hori_);
     }
     
-    distances = std::vector<Scalar>(angSteps+1, Scalar(0));
+    // Precompute vertical angles (size: layers_+1)
+    for (unsigned int j = 0; j < layers_; ++j)
+    {
+        // Map [0, layers_] to [-21.2°, +21.2°]
+        angles_vert_.push_back(j / (Scalar)layers_ * ang_range_vert_ - Scalar(0.5) * ang_range_vert_);
+    }
+    std::cout << "LiDAR360: resolution: " << resolution_ << ", layers: " << layers_ << std::endl;
+    std::cout << "LiDAR360: horizontal FOV: " << ang_range_hori_ << ", vertical FOV: " << ang_range_vert_ << std::endl;
+    std::cout << "LiDAR360: horizontal steps: " << angles_hori_.size() << ", vertical steps: " << angles_vert_.size() << std::endl;
+    std::cout << "LiDAR360: range: [" << channels[0].rangeMin << ", " << channels[0].rangeMax << "]" << std::endl;
+    std::cout << "vertical angles: ";
+    for (unsigned int j = 0; j < layers_; ++j)
+        std::cout << angles_vert_[j] << " ";
+    std::cout << std::endl;
+
+    
+    distances_ = std::vector<Scalar>(resolution_ * layers_, Scalar(0));
 }
 
 void LiDAR360::InternalUpdate(Scalar dt)
 {
     // Get sensor frame in world
     Transform mbTrans = getSensorFrame();
-    Scalar angRange = UnitSystem::Angle(true, 45);
-    // Rotate beam
-    Scalar currentAngle = currentAngStep / (Scalar)(20) * angRange - Scalar(0.5) * angRange;
 
-    // Shoot rays
-    for (unsigned int i = 0; i <= angSteps; ++i)
+     // Loop over vertical layers and horizontal steps.
+    for (unsigned int j = 0; j < layers_; ++j)
     {
-        // Calculate direction based on current angle step
-        Vector3 dir = mbTrans.getBasis().getColumn(0) * btCos(currentAngle) + mbTrans.getBasis().getColumn(1) * btSin(currentAngle)+mbTrans.getBasis().getColumn(2)*btSin(angles[i]);
-
-        Vector3 from = mbTrans.getOrigin() + dir * channels[1].rangeMin;
-        Vector3 to = mbTrans.getOrigin() + dir * channels[1].rangeMax;
-
-        btCollisionWorld::ClosestRayResultCallback closest(from, to);
-        closest.m_collisionFilterGroup = MASK_DYNAMIC;
-        closest.m_collisionFilterMask = MASK_STATIC | MASK_DYNAMIC | MASK_ANIMATED_COLLIDING;
-        SimulationApp::getApp()->getSimulationManager()->getDynamicsWorld()->rayTest(from, to, closest);
-
-        if (closest.hasHit())
+        // Get the vertical angle for layer j.
+        Scalar vAngle = angles_vert_[j];
+        for (unsigned int i = 0; i < resolution_; ++i)
         {
-            Vector3 p = from.lerp(to, closest.m_closestHitFraction);
-            distances[i] = (p - mbTrans.getOrigin()).length();
-        }
-        else
-        {
-            distances[i] = channels[i].rangeMax;
+            // Get the horizontal angle for step i.
+            Scalar hAngle = angles_hori_[i];
+
+            // Calculate direction based on current angle step
+            Vector3 dir = mbTrans.getBasis().getColumn(0) * btCos(hAngle) + mbTrans.getBasis().getColumn(1) * btSin(hAngle) + mbTrans.getBasis().getColumn(2) * btSin(vAngle);
+
+            Vector3 from = mbTrans.getOrigin() + dir * channels[0].rangeMin;
+            Vector3 to = mbTrans.getOrigin() + dir * channels[0].rangeMax;
+
+            btCollisionWorld::ClosestRayResultCallback closest(from, to);
+            closest.m_collisionFilterGroup = MASK_DYNAMIC;
+            closest.m_collisionFilterMask = MASK_STATIC | MASK_DYNAMIC | MASK_ANIMATED_COLLIDING;
+            SimulationApp::getApp()->getSimulationManager()->getDynamicsWorld()->rayTest(from, to, closest);
+
+            unsigned int index = j * (resolution_) + i;
+            if (closest.hasHit())
+            {
+                Vector3 p = from.lerp(to, closest.m_closestHitFraction);
+                distances_[index] = (p - mbTrans.getOrigin()).length();
+            }
+            else
+            {
+                distances_[index] = 0;
+            }
         }
     }
 
-    // Record sample
-    Sample s(angSteps + 1, distances.data());
-    AddSampleToHistory(s);
-
-
-    ++currentAngStep; // Increment normally
-
+   Sample s(resolution_ * layers_, distances_.data());
+   AddSampleToHistory(s);
 }
 
 std::vector<Renderable> LiDAR360::Render()
 {
     std::vector<Renderable> items = Sensor::Render();
-    Scalar angRange = UnitSystem::Angle(true, 45);
+
+    
     if (isRenderable())
     {
         Renderable item;
-        Scalar currentAngle = currentAngStep / (Scalar)(20) * angRange - Scalar(0.5) * angRange;
         item.type = RenderableType::SENSOR_LINES;
-        item.model = glMatrixFromTransform(getSensorFrame());    
-
-        for (unsigned int i = 0; i <= angSteps; ++i)
+        // Set the model matrix to the sensor's transformation
+        item.model = glMatrixFromTransform(getSensorFrame());
+        
+        // total rays per vertical layer:
+        unsigned int raysPerLayer = resolution_;
+        
+        // Loop over each vertical layer
+        for (unsigned int j = 0; j < layers_; ++j)
         {
-            //Vector3 dir = Vector3(0, 0, 1) * btSin(angles[i]) + Vector3(1, 0, 0) * btCos(currentAngle); // Changed direction here
-            Vector3 dir = Vector3(1, 0, 0) * btCos(currentAngle) + Vector3(0, 1, 0) * btSin(currentAngle)+Vector3(0, 0, 1) * btSin(angles[i]);
-            item.points.push_back(glm::vec3(0, 0, 0));
-            item.points.push_back(glm::vec3(dir.x() * distances[i], dir.y() * distances[i], dir.z() * distances[i]));
-        }        
-
+            // Get the vertical angle for this layer.
+            Scalar vAngle = angles_vert_[j];
+            
+            // Loop over each horizontal beam in this layer.
+            for (unsigned int i = 0; i < resolution_; ++i)
+            {
+                // Compute the horizontal angle for this beam with the current offset.
+                Scalar hAngle = angles_hori_[i];
+                
+                // Calculate the ray direction using spherical coordinates.
+                // Here, we assume the sensor’s local coordinate system:
+                // x = cos(vAngle) * cos(hAngle)
+                // y = cos(vAngle) * sin(hAngle)
+                // z = sin(vAngle)
+                Vector3 dir = Vector3(
+                    btCos(vAngle) * btCos(hAngle),
+                    btCos(vAngle) * btSin(hAngle),
+                    btSin(vAngle)
+                );
+                
+                // Compute the index into the distances vector.
+                unsigned int index = j * raysPerLayer + i;
+                
+                // Draw a line from the sensor origin (0,0,0) to the measured point.
+                item.points.push_back(glm::vec3(0.0f, 0.0f, 0.0f));
+                item.points.push_back(glm::vec3(
+                    dir.x() * distances_[index],
+                    dir.y() * distances_[index],
+                    dir.z() * distances_[index]
+                ));
+            }
+        }
+        
         items.push_back(item);
     }
-
+    
     return items;
 }
 
@@ -129,25 +186,35 @@ void LiDAR360::setRange(Scalar rangeMin, Scalar rangeMax)
     btClamp(rangeMin, Scalar(0), Scalar(BT_LARGE_FLOAT));
     btClamp(rangeMax, Scalar(0), Scalar(BT_LARGE_FLOAT)); 
 
-    for(unsigned int i=0; i<=angSteps; ++i)
-    {
-        channels[i].rangeMin = rangeMin;
-        channels[i].rangeMax = rangeMax;
-    }
+   
+    channels.back().rangeMin = rangeMin;
+    channels.back().rangeMax = rangeMax;
+    max_range_ = rangeMax;
+    min_range_ = rangeMin;
+
 }
 
 void LiDAR360::setNoise(Scalar rangeStdDev)
 {
     btClamp(rangeStdDev, Scalar(0), Scalar(BT_LARGE_FLOAT));
-
-    for(unsigned int i=0; i<=angSteps; ++i)
-        channels[i].setStdDev(rangeStdDev);
+    channels[0].setStdDev(rangeStdDev);
 }
 
 ScalarSensorType LiDAR360::getScalarSensorType() const
 {
     return ScalarSensorType::LiDAR360;
 }
+
+Scalar LiDAR360::getAngleRangeHori() const
+{
+    return ang_range_hori_;
+}
+
+Scalar LiDAR360::getAngleRangeVert() const
+{
+    return ang_range_vert_;
+}
+
 
 
 }

@@ -42,11 +42,11 @@ namespace sf
         /*!
          \param uniqueName a name for the sensor
          \param angleRangeDeg a field of view of the LiDAR360 [deg]
-         \param angleSteps resolution of the LiDAR360
+         \param resolution resolution of the LiDAR360
          \param frequency the sampling frequency of the sensor [Hz] (-1 if updated every simulation step)
          \param historyLength defines: -1 -> no history, 0 -> unlimited history, >0 -> history with a specified length
          */
-        LiDAR360(std::string uniqueName, unsigned int angleSteps, Scalar frequency = Scalar(-1), int historyLength = -1);
+        LiDAR360(std::string uniqueName, unsigned int resolution, unsigned int layers, Scalar frequency = Scalar(-1), int historyLength = -1);
         
         //! A method performing internal sensor state update.
         /*!
@@ -72,12 +72,30 @@ namespace sf
         
         //! A method returning the type of the scalar sensor.
         ScalarSensorType getScalarSensorType() const;
+
+        //! A method returning the horizontal angle range of the sensor.
+        Scalar getAngleRangeHori() const;
+
+        Scalar getAngleRangeVert() const;
+
+        unsigned int getResolution() const { return resolution_; }
+
+        unsigned int getLayers() const { return layers_; }
+
+        double getMaxRange() const { return max_range_; }
+
+        double getMinRange() const { return min_range_; }
         
     private:
-        unsigned int angSteps;
-        std::vector<Scalar> angles;
-        std::vector<Scalar> distances;
-        unsigned int currentAngStep;
+        Scalar ang_range_hori_;
+        Scalar ang_range_vert_;
+        unsigned int resolution_;
+        unsigned int layers_;
+        double max_range_;
+        double min_range_;
+        std::vector<Scalar> angles_hori_;
+        std::vector<Scalar> angles_vert_;
+        std::vector<Scalar> distances_;
         bool clockwise;
     };
 }
