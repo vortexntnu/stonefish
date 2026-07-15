@@ -31,57 +31,149 @@
 namespace sf
 {
 
-Odometry::Odometry(std::string uniqueName, Scalar frequency, int historyLength) : LinkSensor(uniqueName, frequency, historyLength)
+
+Odometry::Odometry(std::string uniqueName,
+                   Scalar frequency,
+                   int historyLength)
+    : LinkSensor(uniqueName, frequency, historyLength),
+      ornStdDev(Scalar(0)),
+      ornNoise(Scalar(0), Scalar(1))
 {
-    channels.push_back(SensorChannel("Position X", QuantityType::LENGTH));
-    channels.push_back(SensorChannel("Position Y", QuantityType::LENGTH));
-    channels.push_back(SensorChannel("Position Z", QuantityType::LENGTH));
-    channels.push_back(SensorChannel("Velocity X", QuantityType::VELOCITY));
-    channels.push_back(SensorChannel("Velocity Y", QuantityType::VELOCITY));
-    channels.push_back(SensorChannel("Velocity Z", QuantityType::VELOCITY));
-    channels.push_back(SensorChannel("Orientation X", QuantityType::UNITLESS));
-    channels.push_back(SensorChannel("Orientation Y", QuantityType::UNITLESS));
-    channels.push_back(SensorChannel("Orientation Z", QuantityType::UNITLESS));
-    channels.push_back(SensorChannel("Orientation W", QuantityType::UNITLESS));
-    channels.push_back(SensorChannel("Angular velocity X", QuantityType::ANGULAR_VELOCITY));
-    channels.push_back(SensorChannel("Angular velocity Y", QuantityType::ANGULAR_VELOCITY));
-    channels.push_back(SensorChannel("Angular velocity Z", QuantityType::ANGULAR_VELOCITY));
-    ornStdDev = Scalar(0);
-    ornNoise = std::normal_distribution<Scalar>(Scalar(0), ornStdDev);
+    channels.push_back(
+        SensorChannel("Position X", QuantityType::LENGTH));
+    channels.push_back(
+        SensorChannel("Position Y", QuantityType::LENGTH));
+    channels.push_back(
+        SensorChannel("Position Z", QuantityType::LENGTH));
+
+    channels.push_back(
+        SensorChannel("Velocity X", QuantityType::VELOCITY));
+    channels.push_back(
+        SensorChannel("Velocity Y", QuantityType::VELOCITY));
+    channels.push_back(
+        SensorChannel("Velocity Z", QuantityType::VELOCITY));
+
+    channels.push_back(
+        SensorChannel("Orientation X", QuantityType::UNITLESS));
+    channels.push_back(
+        SensorChannel("Orientation Y", QuantityType::UNITLESS));
+    channels.push_back(
+        SensorChannel("Orientation Z", QuantityType::UNITLESS));
+    channels.push_back(
+        SensorChannel("Orientation W", QuantityType::UNITLESS));
+
+    channels.push_back(
+        SensorChannel(
+            "Angular velocity X",
+            QuantityType::ANGULAR_VELOCITY));
+    channels.push_back(
+        SensorChannel(
+            "Angular velocity Y",
+            QuantityType::ANGULAR_VELOCITY));
+    channels.push_back(
+        SensorChannel(
+            "Angular velocity Z",
+            QuantityType::ANGULAR_VELOCITY));
 }
+
 
 void Odometry::InternalUpdate(Scalar dt)
 {
-    //Calculate transformation from global to imu frame
+    // Calculate transformation from global to IMU frame.
     Transform odomTrans = getSensorFrame();
-    
+
     Vector3 pos = odomTrans.getOrigin();
-    Vector3 v = odomTrans.getBasis().inverse() * attach->getLinearVelocityInLocalPoint(odomTrans.getOrigin() - attach->getCGTransform().getOrigin());
-    
+
+    Vector3 v =
+        odomTrans.getBasis().inverse() *
+        attach->getLinearVelocityInLocalPoint(
+            odomTrans.getOrigin() -
+            attach->getCGTransform().getOrigin());
+
     Quaternion orn = odomTrans.getRotation();
-    Scalar angle = orn.getAngle() + ornNoise(randomGenerator);
+
+    Scalar angleNoise = Scalar(0);
+
+    if (ornStdDev > Scalar(0)) {
+        angleNoise = ornNoise(randomGenerator);
+    }
+
+    const Scalar angle = orn.getAngle() + angleNoise;
     orn = Quaternion(orn.getAxis(), angle);
 
-    Vector3 av = odomTrans.getBasis().inverse() * attach->getAngularVelocity();
-    
-    //Record sample
-    Sample s{std::vector<Scalar>({pos.x(), pos.y(), pos.z(), v.x(), v.y(), v.z(), orn.x(), orn.y(), orn.z(), orn.w(), av.x(), av.y(), av.z()})};
+    Vector3 av =
+        odomTrans.getBasis().inverse() *
+        attach->getAngularVelocity();
+
+    Sample s{
+        std::vector<Scalar>({
+            pos.x(),
+            pos.y(),
+            pos.z(),
+            v.x(),
+            v.y(),
+            v.z(),
+            orn.x(),
+            orn.y(),
+            orn.z(),
+            orn.w(),
+            av.x(),
+            av.y(),
+            av.z()
+        })
+    };
+
     AddSampleToHistory(s);
 }
    
-void Odometry::setNoise(Scalar positionStdDev, Scalar velocityStdDev, Scalar angleStdDev, Scalar angularVelocityStdDev)
+
+void Odometry::setNoise(Scalar positionStdDev,
+                        Scalar velocityStdDev,
+                        Scalar angleStdDev,
+                        Scalar angularVelocityStdDev)
 {
-    channels[0].setStdDev(btClamped(positionStdDev, Scalar(0), Scalar(BT_LARGE_FLOAT)));
-    channels[1].setStdDev(btClamped(positionStdDev, Scalar(0), Scalar(BT_LARGE_FLOAT)));
-    channels[2].setStdDev(btClamped(positionStdDev, Scalar(0), Scalar(BT_LARGE_FLOAT)));
-    channels[3].setStdDev(btClamped(velocityStdDev, Scalar(0), Scalar(BT_LARGE_FLOAT)));
-    channels[4].setStdDev(btClamped(velocityStdDev, Scalar(0), Scalar(BT_LARGE_FLOAT)));
-    channels[5].setStdDev(btClamped(velocityStdDev, Scalar(0), Scalar(BT_LARGE_FLOAT)));
-    channels[10].setStdDev(btClamped(angularVelocityStdDev, Scalar(0), Scalar(BT_LARGE_FLOAT)));
-    channels[11].setStdDev(btClamped(angularVelocityStdDev, Scalar(0), Scalar(BT_LARGE_FLOAT)));
-    channels[12].setStdDev(btClamped(angularVelocityStdDev, Scalar(0), Scalar(BT_LARGE_FLOAT)));
-    ornStdDev = btClamped(angleStdDev, Scalar(0), Scalar(BT_LARGE_FLOAT));
-    ornNoise = std::normal_distribution<Scalar>(Scalar(0), ornStdDev);
+    const Scalar clampedPositionStdDev =
+        btClamped(
+            positionStdDev,
+            Scalar(0),
+            Scalar(BT_LARGE_FLOAT));
+
+    const Scalar clampedVelocityStdDev =
+        btClamped(
+            velocityStdDev,
+            Scalar(0),
+            Scalar(BT_LARGE_FLOAT));
+
+    const Scalar clampedAngularVelocityStdDev =
+        btClamped(
+            angularVelocityStdDev,
+            Scalar(0),
+            Scalar(BT_LARGE_FLOAT));
+
+    channels[0].setStdDev(clampedPositionStdDev);
+    channels[1].setStdDev(clampedPositionStdDev);
+    channels[2].setStdDev(clampedPositionStdDev);
+
+    channels[3].setStdDev(clampedVelocityStdDev);
+    channels[4].setStdDev(clampedVelocityStdDev);
+    channels[5].setStdDev(clampedVelocityStdDev);
+
+    channels[10].setStdDev(clampedAngularVelocityStdDev);
+    channels[11].setStdDev(clampedAngularVelocityStdDev);
+    channels[12].setStdDev(clampedAngularVelocityStdDev);
+
+    ornStdDev =
+        btClamped(
+            angleStdDev,
+            Scalar(0),
+            Scalar(BT_LARGE_FLOAT));
+
+    if (ornStdDev > Scalar(0)) {
+        ornNoise.param(
+            std::normal_distribution<Scalar>::param_type(
+                Scalar(0),
+                ornStdDev));
+    }
 }
 
 ScalarSensorType Odometry::getScalarSensorType() const
