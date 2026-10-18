@@ -200,7 +200,8 @@ void GraphicalSimulationApp::Init()
     cInfo("Ready for running...");
     SDL_Delay(1000);
 
-    Robot* drone = getSimulationManager()->getRobot("Orca");
+    // Start the camera on the drone: the first robot of the scenario (robot names are lower case, e.g. "orca")
+    Robot* drone = getSimulationManager()->getRobot(0u);
     if (drone) 
     {
         trackballCenter = drone->getBaseLink();
