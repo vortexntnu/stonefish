@@ -37,7 +37,6 @@
 #include <chrono>
 #include <thread>
 #include <typeinfo>
-#include <omp.h>
 #include <algorithm>
 #include "core/FilteredCollisionDispatcher.h"
 #include "core/GraphicalSimulationApp.h"
@@ -54,7 +53,7 @@
 #include "utils/UnitSystem.h"
 #include "utils/RayTest.hpp"
 #include "entities/Entity.h"
-//#include "entities/CableEntity.h"
+#include "entities/CableEntity.h"
 #include "entities/FeatherstoneEntity.h"
 #include "entities/solids/Compound.h"
 #include "entities/StaticEntity.h"
@@ -78,7 +77,7 @@ extern ContactDestroyedCallback gContactDestroyedCallback;
 namespace sf
 {
 
-SimulationManager::SimulationManager(Scalar stepsPerSecond, SolverType st, CollisionFilteringType cft) 
+SimulationManager::SimulationManager(Scalar stepsPerSecond, Solver st, CollisionFilter cft) 
     : perfMon(PerformanceMonitor(100))
 {
     //Initialize simulation world
@@ -323,14 +322,14 @@ void SimulationManager::EnableCollision(const Entity* entA, const Entity* entB)
 {
     int colId = CheckCollision(entA, entB);
     
-    if(collisionFilter == CollisionFilteringType::COLLISION_INCLUSIVE && colId == -1)
+    if(collisionFilter == CollisionFilter::INCLUSIVE && colId == -1)
     {
         Collision c;
         c.A = const_cast<Entity*>(entA);
         c.B = const_cast<Entity*>(entB);
         collisions.push_back(c);
     }
-    else if(collisionFilter == CollisionFilteringType::COLLISION_EXCLUSIVE && colId > -1)
+    else if(collisionFilter == CollisionFilter::EXCLUSIVE && colId > -1)
     {
         collisions.erase(collisions.begin() + colId);
     }
@@ -339,7 +338,7 @@ void SimulationManager::EnableCollision(const Entity* entA, const Entity* entB)
 void SimulationManager::DisableCollision(const Entity* entA, const Entity* entB)
 {
     int colId = CheckCollision(entA, entB);
-    if(collisionFilter == CollisionFilteringType::COLLISION_EXCLUSIVE && colId == -1)
+    if(collisionFilter == CollisionFilter::EXCLUSIVE && colId == -1)
     {
         Collision c;
         c.A = const_cast<Entity*>(entA);
@@ -347,7 +346,7 @@ void SimulationManager::DisableCollision(const Entity* entA, const Entity* entB)
         collisions.push_back(c);
         cInfo("Disabling collisions between '%s' and '%s'.", entA->getName().c_str(), entB->getName().c_str());
     }
-    else if(collisionFilter == CollisionFilteringType::COLLISION_INCLUSIVE && colId > -1)
+    else if(collisionFilter == CollisionFilter::INCLUSIVE && colId > -1)
     {
         collisions.erase(collisions.begin() + colId);
         cInfo("Disabling collisions between '%s' and '%s'.", entA->getName().c_str(), entB->getName().c_str());
@@ -390,12 +389,12 @@ Contact* SimulationManager::getContact(const std::string& name)
     return nullptr;
 }
 
-CollisionFilteringType SimulationManager::getCollisionFilter() const
+CollisionFilter SimulationManager::getCollisionFilter() const
 {
     return collisionFilter;
 }
 
-SolverType SimulationManager::getSolverType() const
+Solver SimulationManager::getSolver() const
 {
     return solver;
 }
@@ -706,6 +705,8 @@ void SimulationManager::setSolidDisplayMode(DisplayMode m)
             ((MovingEntity*)entities[i])->setDisplayMode(sdm);
         else if(entities[i]->getType() == EntityType::FEATHERSTONE)
             ((FeatherstoneEntity*)entities[i])->setDisplayMode(sdm);
+        else if(entities[i]->getType() == EntityType::CABLE)
+            ((CableEntity*)entities[i])->setDisplayMode(sdm);
     }
 
     for(size_t i=0; i<actuators.size(); ++i)
@@ -736,24 +737,23 @@ void SimulationManager::getJointErp(Scalar& erp, Scalar& stopErp) const
 
 void SimulationManager::InitializeSolver()
 {
-    dwBroadphase = new btDbvtBroadphase(); //btAxisSweep3(Vector3(-50000.0, -50000.0, -10000.0), Vector3(50000.0, 50000.0, 10000.0));
+    dwBroadphase = new btDbvtBroadphase();
     dwCollisionConfig = new btSoftBodyRigidBodyCollisionConfiguration();
-
+    
     //Choose collision dispatcher
     switch(collisionFilter)
     {
-        case CollisionFilteringType::COLLISION_INCLUSIVE:
+        case CollisionFilter::INCLUSIVE:
             dwDispatcher = new FilteredCollisionDispatcher(dwCollisionConfig, true);
             break;
 
-        case CollisionFilteringType::COLLISION_EXCLUSIVE:
+        case CollisionFilter::EXCLUSIVE:
             dwDispatcher = new FilteredCollisionDispatcher(dwCollisionConfig, false);
             break;
     }
-    //dwDispatcher = new btCollisionDispatcher(dwCollisionConfig);
     
     //Choose constraint solver
-    if(solver == SolverType::SOLVER_SI)
+    if(solver == Solver::SI)
     {
         mbSolver = new btMultiBodyConstraintSolver();
     }
@@ -764,21 +764,21 @@ void SimulationManager::InitializeSolver()
         switch(solver)
         {
             default:
-            case SolverType::SOLVER_DANTZIG:
+            case Solver::DANTZIG:
                 mlcp = new btDantzigSolver();
                 break;
             
-            case SolverType::SOLVER_PGS:
+            case Solver::PGS:
                 mlcp = new btSolveProjectedGaussSeidel();
                 break;
             
-            case SolverType::SOLVER_LEMKE:
+            case Solver::LEMKE:
                 mlcp = new btLemkeSolver();
                 //((btLemkeSolver*)mlcp)->m_maxLoops = 10000;
                 break;
         }
         
-        mbSolver = new btMultiBodyMLCPConstraintSolver(mlcp); //ResearchConstraintSolver(mlcp);
+        mbSolver = new btMultiBodyMLCPConstraintSolver(mlcp);
     }
     
     sbSolver = new btDefaultSoftBodySolver();
@@ -823,6 +823,9 @@ void SimulationManager::InitializeSolver()
     dynamicsWorld->getSolverInfo().m_singleAxisRollingFrictionThreshold = Scalar(1e30); //single axis rolling velocity threshold
     dynamicsWorld->getSolverInfo().m_linearSlop = Scalar(0.); //position bias
     
+    dynamicsWorld->getWorldInfo().m_sparsesdf.setDefaultVoxelsz(Scalar(0.25));
+    dynamicsWorld->getWorldInfo().m_sparsesdf.Reset();
+
     //Override default callbacks
     dynamicsWorld->setWorldUserInfo(this);
     dynamicsWorld->getPairCache()->setInternalGhostPairCallback(new btGhostPairCallback());
@@ -834,14 +837,18 @@ void SimulationManager::InitializeSolver()
     //Set default params
     g = Scalar(9.81);
 
-    sbInfo.m_broadphase = dwBroadphase;
-    sbInfo.m_dispatcher = dwDispatcher;
+    sbInfo = dynamicsWorld->getWorldInfo();
     sbInfo.m_sparsesdf.Initialize();
-    sbInfo.m_sparsesdf.Reset(); 
-    sbInfo.m_gravity.setValue(0,0,g);
+    sbInfo.m_sparsesdf.setDefaultVoxelsz(Scalar(0.1));
+    sbInfo.m_sparsesdf.Reset();
+    sbInfo.air_density = 0.0;
+    sbInfo.water_density = 0.0;
+    sbInfo.water_normal = Vector3(0.0, 0.0, -1.0);
+    sbInfo.water_offset = 0.0;
+    sbInfo.m_gravity.setValue(0, 0, 0);
         
     //Debugging
-    debugDrawer = new OpenGLDebugDrawer(btIDebugDraw::DBG_DrawWireframe);
+    debugDrawer = new OpenGLDebugDrawer();
     dynamicsWorld->setDebugDrawer(debugDrawer);
 }
 
@@ -962,7 +969,7 @@ void SimulationManager::DestroyScenario()
 
     if(SimulationApp::getApp() != nullptr && SimulationApp::getApp()->hasGraphics())
 	{
-        ((GraphicalSimulationApp*)SimulationApp::getApp())->getGLPipeline()->getContent()->DestroyContent();
+        static_cast<GraphicalSimulationApp*>(SimulationApp::getApp())->getGLPipeline()->getContent()->DestroyContent();
 		trackball = nullptr;
 	}
 }
@@ -1108,7 +1115,7 @@ void SimulationManager::StepSimulation(Scalar timeStep)
     SDL_UnlockMutex(simSettingsMutex);
 
     //Inform about MLCP failures
-    if(solver != SolverType::SOLVER_SI)
+    if(solver != Solver::SI)
     {
         SDL_LockMutex(simInfoMutex);
         btMultiBodyMLCPConstraintSolver* mlcp = (btMultiBodyMLCPConstraintSolver*)mbSolver;
@@ -1191,7 +1198,6 @@ void SimulationManager::UpdateDrawingQueue()
 std::pair<Entity*, int>  SimulationManager::PickEntity(Vector3 eye, Vector3 ray)
 {
     ray *= Scalar(100000);
-    //btCollisionWorld::ClosestRayResultCallback rayCallback(eye, eye+ray);
     DetailedRayResultCallback rayCallback(eye, eye+ray);
     rayCallback.m_collisionFilterGroup = MASK_DYNAMIC;
     rayCallback.m_collisionFilterMask = MASK_DYNAMIC | MASK_STATIC | MASK_ANIMATED_COLLIDING | MASK_ANIMATED_NONCOLLIDING;
@@ -1199,11 +1205,15 @@ std::pair<Entity*, int>  SimulationManager::PickEntity(Vector3 eye, Vector3 ray)
                 
     if(rayCallback.hasHit())
     {
-        Entity* ent = (Entity*)rayCallback.m_collisionObject->getUserPointer();
-        return std::make_pair(ent, rayCallback.m_childShapeIndex);
+        Entity* ent = static_cast<Entity*>(rayCallback.m_collisionObject->getUserPointer());
+        if (ent != nullptr
+            && !(ent->getType() == EntityType::STATIC && static_cast<StaticEntity*>(ent)->getStaticType() == StaticEntityType::PLANE) // Ignore plane entities
+        ) 
+        {
+            return std::make_pair(ent, rayCallback.m_childShapeIndex);
+        }
     }
-    else
-        return std::make_pair(nullptr, -1);
+    return std::make_pair(nullptr, -1);
 }
 
 void SimulationManager::RenderBulletDebug()
@@ -1330,7 +1340,9 @@ bool SimulationManager::CustomMaterialCombinerCallback(btManifoldPoint& cp,	cons
     ContactInfo* cInfo = new ContactInfo();
     cInfo->totalAppliedImpulse = Scalar(0);
     cInfo->slip = slipVel;
-    cp.m_userPersistentData = cInfo;
+    if (cp.m_userPersistentData != 0)
+        delete static_cast<ContactInfo*>(cp.m_userPersistentData);
+    cp.m_userPersistentData = (void*)cInfo;
     
     //Damping angular velocity around contact normal (reduce spinning)
     //calculate relative angular velocity
@@ -1382,10 +1394,10 @@ bool SimulationManager::CustomMaterialCombinerCallback(btManifoldPoint& cp,	cons
 void SimulationManager::SolveICTickCallback(btDynamicsWorld* world, Scalar timeStep)
 {
     SimulationManager* simManager = (SimulationManager*)world->getWorldUserInfo();
-    btMultiBodyDynamicsWorld* researchWorld = (btMultiBodyDynamicsWorld*)world;
+    btSoftMultiBodyDynamicsWorld* dynamicsWorld = static_cast<btSoftMultiBodyDynamicsWorld*>(world);
     
     //Clear all forces to ensure that no summing occurs
-    researchWorld->clearForces(); //Includes clearing of multibody forces!
+    dynamicsWorld->clearForces(); //Includes clearing of multibody forces!
     
     //Solve for objects settling
     bool objectsSettled = true;
@@ -1404,6 +1416,11 @@ void SimulationManager::SolveICTickCallback(btDynamicsWorld* world, Scalar timeS
             {
                 FeatherstoneEntity* feather = (FeatherstoneEntity*)simManager->entities[i];
                 feather->ApplyGravity(world->getGravity());
+            }
+            else if(simManager->entities[i]->getType() == EntityType::CABLE)
+            {
+                CableEntity* cable = (CableEntity*)simManager->entities[i];
+                cable->ApplyGravity(world->getGravity());
             }
         }
         
@@ -1464,6 +1481,18 @@ void SimulationManager::SolveICTickCallback(btDynamicsWorld* world, Scalar timeS
                             break;
                     }
                 }
+                else if(simManager->entities[i]->getType() == EntityType::CABLE)
+                {
+                    btSoftBody* cableBody = static_cast<CableEntity*>(simManager->entities[i])->getSoftBody();
+                    for (int h = 0; h < cableBody->m_nodes.size(); ++h)
+                    {
+                        if (cableBody->m_nodes[h].m_v.length() > simManager->icLinTolerance * Scalar(100.))
+                        {
+                            objectsSettled = false;
+                            break;
+                        }
+                    }
+                }
             }
         }
     }
@@ -1487,10 +1516,11 @@ void SimulationManager::SolveICTickCallback(btDynamicsWorld* world, Scalar timeS
 void SimulationManager::SimulationTickCallback(btDynamicsWorld* world, Scalar timeStep)
 {
     SimulationManager* simManager = (SimulationManager*)world->getWorldUserInfo();
-    btMultiBodyDynamicsWorld* mbDynamicsWorld = (btMultiBodyDynamicsWorld*)world;
+    btSoftMultiBodyDynamicsWorld* dynamicsWorld = static_cast<btSoftMultiBodyDynamicsWorld*>(world);
+    ThreadPool* threads = SimulationApp::getApp()->getPhysicsThreadPool();
         
     //Clear all forces to ensure that no summing occurs
-    mbDynamicsWorld->clearForces(); //Includes clearing of multibody forces!
+    dynamicsWorld->clearForces(); //Includes clearing of multibody forces!
         
     //loop through all actuators -> apply forces to bodies (free and connected by joints)
     for(size_t i = 0; i < simManager->actuators.size(); ++i)
@@ -1508,19 +1538,19 @@ void SimulationManager::SimulationTickCallback(btDynamicsWorld* world, Scalar ti
         if(ent->getType() == EntityType::SOLID)
         {
             SolidEntity* solid = (SolidEntity*)ent;
-            solid->ApplyGravity(mbDynamicsWorld->getGravity());
+            solid->ApplyGravity(dynamicsWorld->getGravity());
         }
         else if(ent->getType() == EntityType::FEATHERSTONE)
         {
             FeatherstoneEntity* multibody = (FeatherstoneEntity*)ent;
-            multibody->ApplyGravity(mbDynamicsWorld->getGravity());
+            multibody->ApplyGravity(dynamicsWorld->getGravity());
             multibody->ApplyDamping();
         }
-        /*else if(ent->getType() == EntityType::CABLE)
+        else if(ent->getType() == EntityType::CABLE)
         {
             CableEntity* cable = (CableEntity*)ent;
-            cable->ApplyGravity(mbDynamicsWorld->getGravity());
-        }*/
+            cable->ApplyGravity(dynamicsWorld->getGravity());
+        }
         else if(ent->getType() == EntityType::FORCEFIELD)
         {
             ForcefieldEntity* ff = (ForcefieldEntity*)ent;
@@ -1549,7 +1579,7 @@ void SimulationManager::SimulationTickCallback(btDynamicsWorld* world, Scalar ti
             }
         }
     }
-    
+
     //Geometry-based forces
     bool recompute = simManager->fdCounter % simManager->fdPrescaler == 0;
     ++simManager->fdCounter;
@@ -1562,7 +1592,6 @@ void SimulationManager::SimulationTickCallback(btDynamicsWorld* world, Scalar ti
         
         if(numPairs > 0)
         {
-            #pragma omp parallel for schedule(dynamic)
             for(int h=0; h<numPairs; ++h)
             {
                 const btBroadphasePair& pair = pairArray[h];
@@ -1570,15 +1599,21 @@ void SimulationManager::SimulationTickCallback(btDynamicsWorld* world, Scalar ti
                 if (!colPair)
                     continue;
                     
-                btCollisionObject* co1 = (btCollisionObject*)colPair->m_pProxy0->m_clientObject;
-                btCollisionObject* co2 = (btCollisionObject*)colPair->m_pProxy1->m_clientObject;
+                btCollisionObject* candidate1 = (btCollisionObject*)colPair->m_pProxy0->m_clientObject;
+                btCollisionObject* candidate2 = (btCollisionObject*)colPair->m_pProxy1->m_clientObject;
+                btCollisionObject* co = candidate1 == simManager->atmosphere->getGhost() ? candidate2 : candidate1;
                 
-                if(co1 == simManager->atmosphere->getGhost())
-                    simManager->atmosphere->ApplyFluidForces(world, co2, recompute);
-                else if(co2 == simManager->ocean->getGhost())
-                    simManager->atmosphere->ApplyFluidForces(world, co1, recompute);
+                if (threads != nullptr)
+                    threads->enqueue([](SimulationManager* sim, btDynamicsWorld* world, btCollisionObject* co, bool recompute){
+                        sim->atmosphere->ApplyFluidForces(world, co, recompute); 
+                    }, simManager, world, co, recompute);
+                else
+                    simManager->atmosphere->ApplyFluidForces(world, co, recompute);
             }
         }
+
+        if (threads != nullptr)
+            threads->waitAll();
     }
     
     //Hydrodynamic forces
@@ -1592,7 +1627,6 @@ void SimulationManager::SimulationTickCallback(btDynamicsWorld* world, Scalar ti
         
         if(numPairs > 0)
         {
-            #pragma omp parallel for schedule(dynamic)
             for(int h=0; h<numPairs; ++h)
             {
                 const btBroadphasePair& pair = pairArray[h];
@@ -1600,16 +1634,22 @@ void SimulationManager::SimulationTickCallback(btDynamicsWorld* world, Scalar ti
                 if (!colPair)
                     continue;
                     
-                btCollisionObject* co1 = (btCollisionObject*)colPair->m_pProxy0->m_clientObject;
-                btCollisionObject* co2 = (btCollisionObject*)colPair->m_pProxy1->m_clientObject;
+                btCollisionObject* candidate1 = (btCollisionObject*)colPair->m_pProxy0->m_clientObject;
+                btCollisionObject* candidate2 = (btCollisionObject*)colPair->m_pProxy1->m_clientObject;
+                btCollisionObject* co = candidate1 == simManager->ocean->getGhost() ? candidate2 : candidate1;
                 
-                if(co1 == simManager->ocean->getGhost())
-                    simManager->ocean->ApplyFluidForces(world, co2, recompute);
-                else if(co2 == simManager->ocean->getGhost())
-                    simManager->ocean->ApplyFluidForces(world, co1, recompute);
+                if (threads != nullptr)
+                    threads->enqueue([](SimulationManager* sim, btDynamicsWorld* world, btCollisionObject* co, bool recompute){
+                        sim->ocean->ApplyFluidForces(world, co, recompute); 
+                    }, simManager, world, co, recompute);
+                else
+                    simManager->ocean->ApplyFluidForces(world, co, recompute);
             }
         }
         
+        if (threads != nullptr)
+            threads->waitAll();
+
         simManager->perfMon.HydrodynamicsFinished();
         if(recompute) SDL_UnlockMutex(simManager->simHydroMutex);
     }
@@ -1681,7 +1721,10 @@ void SimulationManager::SimulationPostTickCallback(btDynamicsWorld *world, Scala
     
     //Optional method to update some post simulation data (like ROS messages...)
     if (simManager->getCallSimulationStepCompleted())
+    {
+        ////cInfo("PostTickCallback %ld", simManager->getSimulationClock());
         simManager->SimulationStepCompleted(timeStep);
+    }
 }
 
 //Used to save contact information, including contact forces

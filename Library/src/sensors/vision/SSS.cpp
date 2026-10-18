@@ -20,7 +20,7 @@
 //  Stonefish
 //
 //  Created by Patryk Cieslak on 21/06/20.
-//  Copyright (c) 2020 Patryk Cieslak. All rights reserved.
+//  Copyright (c) 2020-2025 Patryk Cieslak. All rights reserved.
 //
 
 #include "sensors/vision/SSS.h"
@@ -34,7 +34,7 @@ namespace sf
 {
 
 SSS::SSS(std::string uniqueName, unsigned int numOfBins, unsigned int numOfLines, Scalar verticalBeamWidthDeg,
-         Scalar horizontalBeamWidthDeg, Scalar verticalTiltDeg, Scalar minRange, Scalar maxRange, ColorMap cm, Scalar frequency)
+         Scalar horizontalBeamWidthDeg, Scalar verticalTiltDeg, Scalar minRange, Scalar maxRange, ColorMap cm, SonarOutputFormat outputFormat, Scalar frequency)
     : Camera(uniqueName, (numOfBins%2==0 ? numOfBins : numOfBins+1), numOfLines, verticalBeamWidthDeg, frequency)
 {
     range.x = 0.f;
@@ -46,6 +46,7 @@ SSS::SSS(std::string uniqueName, unsigned int numOfBins, unsigned int numOfLines
     fovV = horizontalBeamWidthDeg <= Scalar(0) ? Scalar(1) : (horizontalBeamWidthDeg > Scalar(90) ? Scalar(90) : horizontalBeamWidthDeg);
     tilt = verticalTiltDeg < Scalar(0) ? Scalar(0) : (verticalTiltDeg > Scalar(90) ? Scalar(90) : verticalTiltDeg);
     cMap = cm;
+    outputFormat_ = outputFormat;
     sonarData = NULL;
     displayData = NULL;
     newDataCallback = NULL;
@@ -115,6 +116,11 @@ Scalar SSS::getGain() const
 {
     return gain;
 }
+
+SonarOutputFormat SSS::getOutputFormat() const
+{
+    return outputFormat_;
+}
    
 VisionSensorType SSS::getVisionSensorType() const
 {
@@ -126,10 +132,12 @@ OpenGLView* SSS::getOpenGLView() const
     return glSSS;
 }
 
-void SSS::InitGraphics()
+void SSS::InitGraphics(bool& seesParticles)
 {
+    seesParticles = false;
+
     glSSS = new OpenGLSSS(glm::vec3(0,0,0), glm::vec3(0,0,1.f), glm::vec3(0,-1.f,0),
-                          (GLfloat)fovH, (GLfloat)fovV, (GLint)resX, (GLint)resY, (GLfloat)tilt, range);
+                          (GLfloat)fovH, (GLfloat)fovV, (GLint)resX, (GLint)resY, (GLfloat)tilt, range, outputFormat_);
     glSSS->setNoise(noise);
     glSSS->setSonar(this);
     glSSS->setColorMap(cMap);
@@ -168,7 +176,7 @@ void SSS::NewDataReady(void* data, unsigned int index)
         }
         else
         {
-            sonarData = (GLubyte*)data;
+            sonarData = data;
             newDataCallback(this);
             sonarData = NULL;
         }
@@ -186,8 +194,10 @@ std::vector<Renderable> SSS::Render()
     std::vector<Renderable> items = Sensor::Render();
     if(isRenderable())
     {
-        Renderable item;
-        item.type = RenderableType::SENSOR_LINES;    
+        Renderable item1;
+        item1.type = RenderableType::SENSOR_LINES; 
+        item1.data = std::make_shared<std::vector<glm::vec3>>();
+        auto points = item1.getDataAsPoints();   
         
         //Create single transducer dummy
         int div = 12;
@@ -200,9 +210,9 @@ std::vector<Renderable> SSS::Render()
         {
             GLfloat z = cosf(hAngle) * cosVAngle;
             GLfloat x = sinf(hAngle) * cosVAngle;
-            item.points.push_back(glm::vec3(x, sinVAngle, z));
+            points->push_back(glm::vec3(x, sinVAngle, z));
             if(i > 0 && i < div)
-                item.points.push_back(glm::vec3(x, sinVAngle, z));
+                points->push_back(glm::vec3(x, sinVAngle, z));
             hAngle += fovStep;
         }
         hAngle = -fovStep*(div/2);
@@ -210,9 +220,9 @@ std::vector<Renderable> SSS::Render()
         {
             GLfloat z = cosf(hAngle) * cosVAngle;
             GLfloat x = sinf(hAngle) * cosVAngle;
-            item.points.push_back(glm::vec3(x, -sinVAngle, z));
+            points->push_back(glm::vec3(x, -sinVAngle, z));
             if(i > 0 && i < div)
-                item.points.push_back(glm::vec3(x, -sinVAngle, z));
+                points->push_back(glm::vec3(x, -sinVAngle, z));
             hAngle += fovStep;
         }
         //Arcs max
@@ -223,9 +233,9 @@ std::vector<Renderable> SSS::Render()
         {
             GLfloat z = cosf(hAngle) * cosVAngle;
             GLfloat x = sinf(hAngle) * cosVAngle;
-            item.points.push_back(glm::vec3(x, sinVAngle, z));
+            points->push_back(glm::vec3(x, sinVAngle, z));
             if(i > 0 && i < div)
-                item.points.push_back(glm::vec3(x, sinVAngle, z));
+                points->push_back(glm::vec3(x, sinVAngle, z));
             hAngle += fovStep;
         }
         hAngle = -fovStep*(div/2);
@@ -233,41 +243,45 @@ std::vector<Renderable> SSS::Render()
         {
             GLfloat z = cosf(hAngle) * cosVAngle;
             GLfloat x = sinf(hAngle) * cosVAngle;
-            item.points.push_back(glm::vec3(x, -sinVAngle, z));
+            points->push_back(glm::vec3(x, -sinVAngle, z));
             if(i > 0 && i < div)
-                item.points.push_back(glm::vec3(x, -sinVAngle, z));
+                points->push_back(glm::vec3(x, -sinVAngle, z));
             hAngle += fovStep;
         }
         //Ends
         hAngle = -fovStep*(div/2);
         GLfloat zs = cosf(hAngle) * cosVAngle;
         GLfloat xs = sinf(hAngle) * cosVAngle;
-        item.points.push_back(glm::vec3(xs, sinVAngle, zs));
-        item.points.push_back(glm::vec3(xs, -sinVAngle, zs));
+        points->push_back(glm::vec3(xs, sinVAngle, zs));
+        points->push_back(glm::vec3(xs, -sinVAngle, zs));
         hAngle = fovStep*(div/2);
         GLfloat ze = cosf(hAngle) * cosVAngle;
         GLfloat xe = sinf(hAngle) * cosVAngle;
-        item.points.push_back(glm::vec3(xe, sinVAngle, ze));
-        item.points.push_back(glm::vec3(xe, -sinVAngle, ze));
+        points->push_back(glm::vec3(xe, sinVAngle, ze));
+        points->push_back(glm::vec3(xe, -sinVAngle, ze));
         //Pyramid
-        item.points.push_back(glm::vec3(0,0,0));
-        item.points.push_back(glm::vec3(xs, sinVAngle, zs));
-        item.points.push_back(glm::vec3(0,0,0));
-        item.points.push_back(glm::vec3(xs, -sinVAngle, zs));
-        item.points.push_back(glm::vec3(0,0,0));
-        item.points.push_back(glm::vec3(xe, sinVAngle, ze));
-        item.points.push_back(glm::vec3(0,0,0));
-        item.points.push_back(glm::vec3(xe, -sinVAngle, ze));
+        points->push_back(glm::vec3(0,0,0));
+        points->push_back(glm::vec3(xs, sinVAngle, zs));
+        points->push_back(glm::vec3(0,0,0));
+        points->push_back(glm::vec3(xs, -sinVAngle, zs));
+        points->push_back(glm::vec3(0,0,0));
+        points->push_back(glm::vec3(xe, sinVAngle, ze));
+        points->push_back(glm::vec3(0,0,0));
+        points->push_back(glm::vec3(xe, -sinVAngle, ze));
 
         //Add two transducer dummies
         GLfloat offsetAngle = M_PI_2 - glm::radians(tilt);
         glm::mat4 views[2];
         views[0] = glm::rotate(-offsetAngle, glm::vec3(0.f,1.f,0.f));
         views[1] = glm::rotate(offsetAngle, glm::vec3(0.f,1.f,0.f));
-        item.model = glMatrixFromTransform(getSensorFrame()) * views[0];
-        items.push_back(item);
-        item.model = glMatrixFromTransform(getSensorFrame()) * views[1];
-        items.push_back(item);
+        item1.model = glMatrixFromTransform(getSensorFrame()) * views[0];
+        items.push_back(item1);
+
+        Renderable item2;
+        item2.type = item1.type;
+        item2.data = item1.data;
+        item2.model = glMatrixFromTransform(getSensorFrame()) * views[1];
+        items.push_back(item2);
     }
     return items;
 }

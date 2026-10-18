@@ -39,9 +39,10 @@
 #include <sensors/vision/OpticalFlowCamera.h>
 #include <sensors/vision/EventBasedCamera.h>
 #include <sensors/vision/SegmentationCamera.h>
+#include <iostream>
 
 CameraTestManager::CameraTestManager(sf::Scalar stepsPerSecond)
-   : SimulationManager(stepsPerSecond, sf::SolverType::SOLVER_SI, sf::CollisionFilteringType::COLLISION_EXCLUSIVE)
+   : SimulationManager(stepsPerSecond, sf::Solver::SI, sf::CollisionFilter::EXCLUSIVE)
 {
 }
 

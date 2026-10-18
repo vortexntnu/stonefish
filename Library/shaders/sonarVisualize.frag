@@ -1,5 +1,5 @@
 /*    
-    Copyright (c) 2020-2024 Patryk Cieslak. All rights reserved.
+    Copyright (c) 2020-2025 Patryk Cieslak. All rights reserved.
 
     This file is a part of Stonefish.
 
@@ -17,7 +17,7 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-#version 330
+#version 430
 
 in vec2 texcoord;
 out vec3 fragcolor;

@@ -30,6 +30,7 @@
 #include "core/SimulationManager.h"
 #include "entities/SolidEntity.h"
 #include "entities/FeatherstoneEntity.h"
+#include "utils/DebugUtil.hpp"
 
 namespace sf
 {
@@ -39,7 +40,11 @@ FixedJoint::FixedJoint(std::string uniqueName, SolidEntity* solid)
 {
     btRigidBody* body = solid->rigidBody;
     
-    btFixedConstraint* fixed = new btFixedConstraint(*body, Transform::getIdentity());
+    btGeneric6DofConstraint* fixed = new btGeneric6DofConstraint(*body, Transform::getIdentity(), true);
+    fixed->setAngularLowerLimit(Vector3(0,0,0));
+    fixed->setAngularUpperLimit(Vector3(0,0,0));
+    fixed->setLinearLowerLimit(Vector3(0,0,0));
+    fixed->setLinearUpperLimit(Vector3(0,0,0));
     setConstraint(fixed);
 
     jSolidA = nullptr;
@@ -53,8 +58,8 @@ FixedJoint::FixedJoint(std::string uniqueName, SolidEntity* solidA, SolidEntity*
 {
     btRigidBody* bodyA = solidA->rigidBody;
     btRigidBody* bodyB = solidB->rigidBody;
-    Transform frameInA = Transform::getIdentity();
-    Transform frameInB = solidB->getCGTransform().inverse() * solidA->getCGTransform();
+    Transform frameInA = solidA->getCGTransform().inverse() * solidB->getCGTransform();
+    Transform frameInB = Transform::getIdentity(); 
     
     btFixedConstraint* fixed = new btFixedConstraint(*bodyA, *bodyB, frameInA, frameInB);
     setConstraint(fixed);
@@ -70,11 +75,13 @@ FixedJoint::FixedJoint(std::string uniqueName, SolidEntity* solid, FeatherstoneE
 {
     Transform linkTransform = fe->getLinkTransform(linkId+1);
     Transform solidTransform = solid->getCGTransform();
-    Vector3 pivotInA = V0();
-    Vector3 pivotInB = solidTransform.inverse() * linkTransform.getOrigin();
-    Matrix3 frameInA = Matrix3::getIdentity();
-    Matrix3 frameInB = solidTransform.getBasis().inverse() * linkTransform.getBasis();
-    
+
+    // Pivot point and frame have to be aligned with body B, otherwise the constraint explodes !!!
+    Vector3 pivotInA = linkTransform.inverse() * solidTransform.getOrigin();
+    Matrix3 frameInA = linkTransform.getBasis().inverse() * solidTransform.getBasis();
+    Vector3 pivotInB = V0();
+    Matrix3 frameInB = Matrix3::getIdentity();
+
     btMultiBodyFixedConstraint* fixed = new btMultiBodyFixedConstraint(fe->getMultiBody(), linkId, solid->rigidBody, pivotInA, pivotInB, frameInA, frameInB);
     fixed->setMaxAppliedImpulse(BT_LARGE_FLOAT);
     setConstraint(fixed);
@@ -89,10 +96,11 @@ FixedJoint::FixedJoint(std::string uniqueName, FeatherstoneEntity* feA, Feathers
 {
     Transform linkATransform = feA->getLinkTransform(linkIdA+1);
     Transform linkBTransform = feB->getLinkTransform(linkIdB+1);
-    Vector3 pivotInA = V0();
-    Vector3 pivotInB = linkBTransform.inverse() * linkATransform.getOrigin();
-    Matrix3 frameInA = Matrix3::getIdentity();
-    Matrix3 frameInB = linkBTransform.getBasis().inverse() * linkATransform.getBasis();	
+    
+    Vector3 pivotInA = linkATransform.inverse() * linkBTransform.getOrigin();
+    Matrix3 frameInA = linkATransform.getBasis().inverse() * linkBTransform.getBasis();	
+    Vector3 pivotInB = V0();
+    Matrix3 frameInB = Matrix3::getIdentity();
     
     btMultiBodyFixedConstraint* fixed = new btMultiBodyFixedConstraint(feA->getMultiBody(), linkIdA, feB->getMultiBody(), linkIdB, pivotInA, pivotInB, frameInA, frameInB);
     fixed->setMaxAppliedImpulse(BT_LARGE_FLOAT);
@@ -116,41 +124,38 @@ void FixedJoint::UpdateDefinition()
         delete constraint;
         if(jSolidA == nullptr)
         {
-            setConstraint(new btFixedConstraint(*jSolidB->getRigidBody(), Transform::getIdentity()));
+            btGeneric6DofConstraint* fixed = new btGeneric6DofConstraint(*jSolidB->getRigidBody(), Transform::getIdentity(), true);
+            fixed->setAngularLowerLimit(Vector3(0,0,0));
+            fixed->setAngularUpperLimit(Vector3(0,0,0));
+            fixed->setLinearLowerLimit(Vector3(0,0,0));
+            fixed->setLinearUpperLimit(Vector3(0,0,0));
+            setConstraint(fixed);
         }
         else
         {
-            Transform frameInA = Transform::getIdentity();
-            Transform frameInB = jSolidB->getCGTransform().inverse() * jSolidA->getCGTransform();
-            setConstraint(new btFixedConstraint(*jSolidA->getRigidBody(), *jSolidB->getRigidBody(), frameInA, frameInB));   
+            Transform frameInA = jSolidA->getCGTransform().inverse() * jSolidB->getCGTransform();
+            // Frame in B is always identity
+            setConstraint(new btFixedConstraint(*jSolidA->getRigidBody(), *jSolidB->getRigidBody(), frameInA, Transform::getIdentity()));   
         }        
     }
     else if(mbConstraint != nullptr)
     {
         Transform linkATransform = jSolidA->getCGTransform();
         Transform linkBTransform = jSolidB->getCGTransform();
-        Vector3 pivotInB = linkBTransform.inverse() * linkATransform.getOrigin();
-        Matrix3 frameInB = linkBTransform.getBasis().inverse() * linkATransform.getBasis();	
+        
+        Vector3 pivotInA = linkATransform.inverse() * linkBTransform.getOrigin();
+        Matrix3 frameInA = linkATransform.getBasis().inverse() * linkBTransform.getBasis();	
         
         btMultiBodyFixedConstraint* fix = static_cast<btMultiBodyFixedConstraint*>(mbConstraint);
-        fix->setPivotInB(pivotInB);
-        fix->setFrameInB(frameInB);
+        fix->setPivotInA(pivotInA);
+        fix->setFrameInA(frameInA);
+        // Pivot and frame in B are always identity
     }
 }
 
 std::vector<Renderable> FixedJoint::Render()
 {
     std::vector<Renderable> items(0);
-    
-    // Renderable item;
-    // item.model = glm::mat4(1.f);
-    // item.type = RenderableType::JOINT_LINES;
-    // Vector3 A = jSolidA->getCGTransform().getOrigin();
-    // Vector3 B = jSolidB->getCGTransform().getOrigin();
-    // item.points.push_back(glm::vec3(A.getX(), A.getY(), A.getZ()));
-    // item.points.push_back(glm::vec3(B.getX(), B.getY(), B.getZ()));
-    // items.push_back(item);    
-    
     return items;
 }
 
