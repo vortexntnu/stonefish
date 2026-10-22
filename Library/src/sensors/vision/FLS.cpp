@@ -20,7 +20,7 @@
 //  Stonefish
 //
 //  Created by Patryk Cieslak on 17/02/20.
-//  Copyright (c) 2020 Patryk Cieslak. All rights reserved.
+//  Copyright (c) 2020-2025 Patryk Cieslak. All rights reserved.
 //
 
 #include "sensors/vision/FLS.h"
@@ -34,7 +34,7 @@ namespace sf
 {
 
 FLS::FLS(std::string uniqueName, unsigned int numOfBeams, unsigned int numOfBins, Scalar horizontalFOVDeg, 
-    Scalar verticalFOVDeg, Scalar minRange, Scalar maxRange, ColorMap cm, Scalar frequency)
+    Scalar verticalFOVDeg, Scalar minRange, Scalar maxRange, ColorMap cm, SonarOutputFormat outputFormat, Scalar frequency)
     : Camera(uniqueName, numOfBeams, numOfBins, horizontalFOVDeg, frequency)
 {
     range.x = 0.f;
@@ -45,6 +45,7 @@ FLS::FLS(std::string uniqueName, unsigned int numOfBeams, unsigned int numOfBins
     gain = Scalar(1);
     fovV = verticalFOVDeg <= Scalar(0) ? Scalar(20) : (verticalFOVDeg > Scalar(179) ? Scalar(179) : verticalFOVDeg);
     cMap = cm;
+    outputFormat_ = outputFormat;
     sonarData = NULL;
     displayData = NULL;
     newDataCallback = NULL;
@@ -121,6 +122,11 @@ Scalar FLS::getVerticalFOV() const
 {
     return fovV;
 }
+
+SonarOutputFormat FLS::getOutputFormat() const
+{
+    return outputFormat_;
+}
     
 VisionSensorType FLS::getVisionSensorType() const
 {
@@ -132,10 +138,12 @@ OpenGLView* FLS::getOpenGLView() const
     return glFLS;
 }
 
-void FLS::InitGraphics()
+void FLS::InitGraphics(bool& seesParticles)
 {
+    seesParticles = false;
+
     glFLS = new OpenGLFLS(glm::vec3(0,0,0), glm::vec3(0,0,1.f), glm::vec3(0,-1.f,0), 
-                          (GLfloat)fovH, (GLfloat)fovV, (GLint)resX, (GLint)resY, range);
+                          (GLfloat)fovH, (GLfloat)fovV, (GLint)resX, (GLint)resY, range, outputFormat_);
     glFLS->setNoise(noise);
     glFLS->setSonar(this);
     glFLS->setColorMap(cMap);
@@ -174,7 +182,7 @@ void FLS::NewDataReady(void* data, unsigned int index)
         }
         else
         {
-            sonarData = (GLubyte*)data;
+            sonarData = data;
             newDataCallback(this);
             sonarData = NULL;
         }
@@ -195,6 +203,8 @@ std::vector<Renderable> FLS::Render()
         Renderable item;
         item.model = glMatrixFromTransform(getSensorFrame());
         item.type = RenderableType::SENSOR_LINES;    
+        item.data = std::make_shared<std::vector<glm::vec3>>();
+        auto points = item.getDataAsPoints();
         
         //Create sonar dummy
         int div = 12;
@@ -207,9 +217,9 @@ std::vector<Renderable> FLS::Render()
         {
             GLfloat z = cosf(hAngle) * cosVAngle;
             GLfloat x = sinf(hAngle) * cosVAngle;
-            item.points.push_back(glm::vec3(x, sinVAngle, z));
+            points->push_back(glm::vec3(x, sinVAngle, z));
             if(i > 0 && i < div)
-                item.points.push_back(glm::vec3(x, sinVAngle, z));
+                points->push_back(glm::vec3(x, sinVAngle, z));
             hAngle += fovStep;
         }
         hAngle = -fovStep*(div/2);
@@ -217,9 +227,9 @@ std::vector<Renderable> FLS::Render()
         {
             GLfloat z = cosf(hAngle) * cosVAngle;
             GLfloat x = sinf(hAngle) * cosVAngle;
-            item.points.push_back(glm::vec3(x, -sinVAngle, z));
+            points->push_back(glm::vec3(x, -sinVAngle, z));
             if(i > 0 && i < div)
-                item.points.push_back(glm::vec3(x, -sinVAngle, z));
+                points->push_back(glm::vec3(x, -sinVAngle, z));
             hAngle += fovStep;
         }
         //Max Arcs
@@ -230,9 +240,9 @@ std::vector<Renderable> FLS::Render()
         {
             GLfloat z = cosf(hAngle) * cosVAngle;
             GLfloat x = sinf(hAngle) * cosVAngle;
-            item.points.push_back(glm::vec3(x, sinVAngle, z));
+            points->push_back(glm::vec3(x, sinVAngle, z));
             if(i > 0 && i < div)
-                item.points.push_back(glm::vec3(x, sinVAngle, z));
+                points->push_back(glm::vec3(x, sinVAngle, z));
             hAngle += fovStep;
         }
         hAngle = -fovStep*(div/2);
@@ -240,31 +250,31 @@ std::vector<Renderable> FLS::Render()
         {
             GLfloat z = cosf(hAngle) * cosVAngle;
             GLfloat x = sinf(hAngle) * cosVAngle;
-            item.points.push_back(glm::vec3(x, -sinVAngle, z));
+            points->push_back(glm::vec3(x, -sinVAngle, z));
             if(i > 0 && i < div)
-                item.points.push_back(glm::vec3(x, -sinVAngle, z));
+                points->push_back(glm::vec3(x, -sinVAngle, z));
             hAngle += fovStep;
         }
         //Ends
         hAngle = -fovStep*(div/2);
         GLfloat zs = cosf(hAngle) * cosVAngle;
         GLfloat xs = sinf(hAngle) * cosVAngle;
-        item.points.push_back(glm::vec3(xs, sinVAngle, zs));
-        item.points.push_back(glm::vec3(xs, -sinVAngle, zs));
+        points->push_back(glm::vec3(xs, sinVAngle, zs));
+        points->push_back(glm::vec3(xs, -sinVAngle, zs));
         hAngle = fovStep*(div/2);
         GLfloat ze = cosf(hAngle) * cosVAngle;
         GLfloat xe = sinf(hAngle) * cosVAngle;
-        item.points.push_back(glm::vec3(xe, sinVAngle, ze));
-        item.points.push_back(glm::vec3(xe, -sinVAngle, ze));
+        points->push_back(glm::vec3(xe, sinVAngle, ze));
+        points->push_back(glm::vec3(xe, -sinVAngle, ze));
         //Pyramid
-        item.points.push_back(glm::vec3(0,0,0));
-        item.points.push_back(glm::vec3(xs, sinVAngle, zs));
-        item.points.push_back(glm::vec3(0,0,0));
-        item.points.push_back(glm::vec3(xs, -sinVAngle, zs));
-        item.points.push_back(glm::vec3(0,0,0));
-        item.points.push_back(glm::vec3(xe, sinVAngle, ze));
-        item.points.push_back(glm::vec3(0,0,0));
-        item.points.push_back(glm::vec3(xe, -sinVAngle, ze));
+        points->push_back(glm::vec3(0,0,0));
+        points->push_back(glm::vec3(xs, sinVAngle, zs));
+        points->push_back(glm::vec3(0,0,0));
+        points->push_back(glm::vec3(xs, -sinVAngle, zs));
+        points->push_back(glm::vec3(0,0,0));
+        points->push_back(glm::vec3(xe, sinVAngle, ze));
+        points->push_back(glm::vec3(0,0,0));
+        points->push_back(glm::vec3(xe, -sinVAngle, ze));
 
         items.push_back(item);
     }

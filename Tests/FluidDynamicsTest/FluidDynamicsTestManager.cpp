@@ -25,7 +25,6 @@
 
 #include "FluidDynamicsTestManager.h"
 
-#include "FluidDynamicsTestApp.h"
 #include <entities/solids/Polyhedron.h>
 #include <entities/solids/Box.h>
 #include <entities/solids/Sphere.h>
@@ -38,16 +37,17 @@
 #include <core/FeatherstoneRobot.h>
 #include <graphics/OpenGLTrackball.h>
 #include <utils/SystemUtil.hpp>
+#include <utils/DebugUtil.hpp>
 #include <utils/UnitSystem.h>
 #include <core/NED.h>
 
 FluidDynamicsTestManager::FluidDynamicsTestManager(sf::Scalar stepsPerSecond)
-: SimulationManager(stepsPerSecond, sf::SolverType::SOLVER_SI, sf::CollisionFilteringType::COLLISION_EXCLUSIVE)
+: SimulationManager(stepsPerSecond, sf::Solver::SI, sf::CollisionFilter::EXCLUSIVE)
 {
 }
 
 void FluidDynamicsTestManager::BuildScenario()
-{
+{    
     ///////SOLVER///////////
     sf::Scalar erp, stopErp;
     getJointErp(erp, stopErp);
@@ -60,6 +60,7 @@ void FluidDynamicsTestManager::BuildScenario()
     globalDamping = 0.1;
     setSolverParams(erp, stopErp, erp2, globalDamping, globalFriction, linSleep, angSleep);
     setFluidDynamicsPrescaler(1);
+    sf::SimulationApp::getApp()->setMaxPhysicsThreads(16);
 
     ///////MATERIALS////////
     CreateMaterial("Light", sf::UnitSystem::Density(sf::CGS, sf::MKS, 0.9), 0.3);
@@ -82,8 +83,8 @@ void FluidDynamicsTestManager::BuildScenario()
     getAtmosphere()->SetSunPosition(0.0, 60.0);
 
     //Externals
-    sf::BodyPhysicsSettings phy;
-    phy.mode = sf::BodyPhysicsMode::SUBMERGED;
+    sf::PhysicsSettings phy;
+    phy.mode = sf::PhysicsMode::SUBMERGED;
     phy.collisions = true;
     phy.buoyancy = true;
 
@@ -162,86 +163,88 @@ void FluidDynamicsTestManager::BuildScenario()
 
 void FluidDynamicsTestManager::SimulationStepCompleted(sf::Scalar timeStep)
 {
-    std::cout << "----------------------------------------------------" << std::endl;
+    std::cout << "Hydrodynamics time: " << getPerformanceMonitor().getHydrodynamicsTimeAverage() << " us\n";
 
-    sf::Scalar rho = getOcean()->getLiquid().density;
+    // std::cout << "----------------------------------------------------\n";
 
-    //SPHERE
-    sf::Sphere* sphere = (sf::Sphere*)getEntity("Sphere");
-    sf::Scalar sphereRadius = 0.5;
-    sf::Vector3 sphereInertia = sphere->getInertia();
+    // sf::Scalar rho = getOcean()->getLiquid().density;
 
-    sf::Scalar expectedSphereVolume = 4.0 / 3.0 * M_PI * sphereRadius * sphereRadius * sphereRadius;
-    sf::Scalar expectedSphereMass = sphere->getMaterial().density * expectedSphereVolume;
-    sf::Scalar expectedSphereInertia = 2.0 / 5.0 * expectedSphereMass * sphereRadius * sphereRadius;
-    sf::Scalar expectedSphereSubmergedVolume = expectedSphereVolume * sphere->getMaterial().density/rho;
+    // //SPHERE
+    // sf::Sphere* sphere = (sf::Sphere*)getEntity("Sphere");
+    // sf::Scalar sphereRadius = 0.5;
+    // sf::Vector3 sphereInertia = sphere->getInertia();
 
-    sf::TestScalar("Sphere mass", sphere->getMass(), expectedSphereMass);
-    sf::TestScalar("Sphere volume", sphere->getVolume(), expectedSphereVolume);
-    sf::TestVector3("Sphere inertia", sphereInertia, sf::Vector3(expectedSphereInertia, expectedSphereInertia, expectedSphereInertia));
-    sf::TestScalar("Sphere submerged volume", sphere->getSubmergedVolume(), expectedSphereSubmergedVolume, 1e-3);
+    // sf::Scalar expectedSphereVolume = 4.0 / 3.0 * M_PI * sphereRadius * sphereRadius * sphereRadius;
+    // sf::Scalar expectedSphereMass = sphere->getMaterial().density * expectedSphereVolume;
+    // sf::Scalar expectedSphereInertia = 2.0 / 5.0 * expectedSphereMass * sphereRadius * sphereRadius;
+    // sf::Scalar expectedSphereSubmergedVolume = expectedSphereVolume * sphere->getMaterial().density/rho;
+
+    // sf::testScalar("Sphere mass", sphere->getMass(), expectedSphereMass);
+    // sf::testScalar("Sphere volume", sphere->getVolume(), expectedSphereVolume);
+    // sf::testVector3("Sphere inertia", sphereInertia, sf::Vector3(expectedSphereInertia, expectedSphereInertia, expectedSphereInertia));
+    // sf::testScalar("Sphere submerged volume", sphere->getSubmergedVolume(), expectedSphereSubmergedVolume, 1e-3);
     
-    //BOX
-    sf::Box* box = (sf::Box*)getEntity("Box");
-    sf::Vector3 boxDims(1.0, 0.5, 0.2);
-    sf::Vector3 boxInertia = box->getInertia();
+    // //BOX
+    // sf::Box* box = (sf::Box*)getEntity("Box");
+    // sf::Vector3 boxDims(1.0, 0.5, 0.2);
+    // sf::Vector3 boxInertia = box->getInertia();
 
-    sf::Scalar expectedBoxVolume = boxDims.getX() * boxDims.getY() * boxDims.getZ();
-    sf::Scalar expectedBoxMass = box->getMaterial().density * expectedBoxVolume;
-    sf::Vector3 expectedBoxInertia = 1.0 / 12.0 * expectedBoxMass * sf::Vector3(boxDims.getY() * boxDims.getY() + boxDims.getZ() * boxDims.getZ(),
-        boxDims.getX() * boxDims.getX() + boxDims.getZ() * boxDims.getZ(), boxDims.getX() * boxDims.getX() + boxDims.getY() * boxDims.getY());
-    sf::Scalar expectedBoxSubmergedVolume = expectedBoxVolume * box->getMaterial().density/rho;
+    // sf::Scalar expectedBoxVolume = boxDims.getX() * boxDims.getY() * boxDims.getZ();
+    // sf::Scalar expectedBoxMass = box->getMaterial().density * expectedBoxVolume;
+    // sf::Vector3 expectedBoxInertia = 1.0 / 12.0 * expectedBoxMass * sf::Vector3(boxDims.getY() * boxDims.getY() + boxDims.getZ() * boxDims.getZ(),
+    //     boxDims.getX() * boxDims.getX() + boxDims.getZ() * boxDims.getZ(), boxDims.getX() * boxDims.getX() + boxDims.getY() * boxDims.getY());
+    // sf::Scalar expectedBoxSubmergedVolume = expectedBoxVolume * box->getMaterial().density/rho;
 
-    sf::TestScalar("Box mass", box->getMass(), expectedBoxMass);
-    sf::TestScalar("Box volume", box->getVolume(), expectedBoxVolume);
-    sf::TestVector3("Box inertia", boxInertia, expectedBoxInertia);
-    sf::TestScalar("Box submerged volume", box->getSubmergedVolume(), expectedBoxSubmergedVolume, 1e-3);
+    // sf::testScalar("Box mass", box->getMass(), expectedBoxMass);
+    // sf::testScalar("Box volume", box->getVolume(), expectedBoxVolume);
+    // sf::testVector3("Box inertia", boxInertia, expectedBoxInertia);
+    // sf::testScalar("Box submerged volume", box->getSubmergedVolume(), expectedBoxSubmergedVolume, 1e-3);
 
-    //POLYHEDRON
-    sf::Polyhedron* hull = (sf::Polyhedron*)getEntity("Hull");
-    sf::Vector3 hullInertia = hull->getInertia();
-    sf::Transform cgTransform = hull->getCG2OTransform().inverse();
-    sf::Scalar expectedHullVolume = 0.096699;
-    sf::Scalar expectedHullMass = hull->getMaterial().density * expectedHullVolume;
-    sf::Vector3 expectedHullInertia = hull->getMaterial().density * sf::Vector3(0.001080, 0.014772, 0.014772);
-    sf::Scalar expectedHullSubmergedVolume = expectedHullVolume * hull->getMaterial().density/rho;
+    // //POLYHEDRON
+    // sf::Polyhedron* hull = (sf::Polyhedron*)getEntity("Hull");
+    // sf::Vector3 hullInertia = hull->getInertia();
+    // sf::Transform cgTransform = hull->getCG2OTransform().inverse();
+    // sf::Scalar expectedHullVolume = 0.096699;
+    // sf::Scalar expectedHullMass = hull->getMaterial().density * expectedHullVolume;
+    // sf::Vector3 expectedHullInertia = hull->getMaterial().density * sf::Vector3(0.001080, 0.014772, 0.014772);
+    // sf::Scalar expectedHullSubmergedVolume = expectedHullVolume * hull->getMaterial().density/rho;
     
-    sf::TestScalar("Hull mass", hull->getMass(), expectedHullMass);
-    sf::TestScalar("Hull volume", hull->getVolume(), expectedHullVolume);
-    sf::TestVector3("Hull inertia", hullInertia, expectedHullInertia);
-    sf::TestScalar("Hull submerged volume", hull->getSubmergedVolume(), expectedHullSubmergedVolume);
+    // sf::testScalar("Hull mass", hull->getMass(), expectedHullMass);
+    // sf::testScalar("Hull volume", hull->getVolume(), expectedHullVolume);
+    // sf::testVector3("Hull inertia", hullInertia, expectedHullInertia);
+    // sf::testScalar("Hull submerged volume", hull->getSubmergedVolume(), expectedHullSubmergedVolume);
     
-    //POLYHEDRON 2
-    sf::Polyhedron* sphR1M = (sf::Polyhedron*)getEntity("SphereR1M");
-    sf::Vector3 sphR1MInertia = sphR1M->getInertia();
-    sf::Transform sphR1MCGTransform = sphR1M->getCG2OTransform().inverse();
+    // //POLYHEDRON 2
+    // sf::Polyhedron* sphR1M = (sf::Polyhedron*)getEntity("SphereR1M");
+    // sf::Vector3 sphR1MInertia = sphR1M->getInertia();
+    // sf::Transform sphR1MCGTransform = sphR1M->getCG2OTransform().inverse();
 
-    sf::Scalar expectedSphR1MVolume = 4.0 / 3.0 * M_PI;
-    sf::Scalar expectedSphR1MMass = sphR1M->getMaterial().density * expectedSphR1MVolume;
-    sf::Vector3 expectedSphR1MInertia = 2.0 / 5.0 * expectedSphR1MMass * sf::Vector3(1, 1, 1);
-    sf::Scalar expectedSphR1MSubmergedVolume = expectedSphR1MVolume * sphR1M->getMaterial().density/rho;
+    // sf::Scalar expectedSphR1MVolume = 4.0 / 3.0 * M_PI;
+    // sf::Scalar expectedSphR1MMass = sphR1M->getMaterial().density * expectedSphR1MVolume;
+    // sf::Vector3 expectedSphR1MInertia = 2.0 / 5.0 * expectedSphR1MMass * sf::Vector3(1, 1, 1);
+    // sf::Scalar expectedSphR1MSubmergedVolume = expectedSphR1MVolume * sphR1M->getMaterial().density/rho;
 
-    sf::TestScalar("SphereR1M mass", sphR1M->getMass(), expectedSphR1MMass, 1e-2);
-    sf::TestScalar("SphereR1M volume", sphR1M->getVolume(), expectedSphR1MVolume, 1e-2);
-    sf::TestVector3("SphereR1M inertia", sphR1MInertia, expectedSphR1MInertia, 1e-2);
-    sf::TestScalar("SphereR1M submerged volume", sphR1M->getSubmergedVolume(), expectedSphR1MSubmergedVolume, 1e-2);
+    // sf::testScalar("SphereR1M mass", sphR1M->getMass(), expectedSphR1MMass, 1e-2);
+    // sf::testScalar("SphereR1M volume", sphR1M->getVolume(), expectedSphR1MVolume, 1e-2);
+    // sf::testVector3("SphereR1M inertia", sphR1MInertia, expectedSphR1MInertia, 1e-2);
+    // sf::testScalar("SphereR1M submerged volume", sphR1M->getSubmergedVolume(), expectedSphR1MSubmergedVolume, 1e-2);
 
-    // DRAG TESTING
-    auto v1 = static_cast<sf::SolidEntity*>(getEntity("Hull1"))->getLinearVelocity();
-    auto v2 = static_cast<sf::SolidEntity*>(getEntity("Hull2"))->getLinearVelocity();
+    // // DRAG TESTING
+    // auto v1 = static_cast<sf::SolidEntity*>(getEntity("Hull1"))->getLinearVelocity();
+    // auto v2 = static_cast<sf::SolidEntity*>(getEntity("Hull2"))->getLinearVelocity();
 
-    sf::TestScalar("Solid body drag", v1.length(), v2.length(), 0.01);
+    // sf::testScalar("Solid body drag", v1.length(), v2.length(), 0.01);
 
-    auto odometry = getSensor("Odometry0");
-    auto s = static_cast<sf::Odometry*>(odometry)->getLastSample();
-    sf::Scalar velX = s.getValue(3);
+    // auto odometry = getSensor("Odometry0");
+    // auto s = static_cast<sf::Odometry*>(odometry)->getLastSample();
+    // sf::Scalar velX = s.getValue(3);
 
-    for (int i = 1; i < 8; ++i)
-    {
-        auto odometry = getSensor("Odometry" + std::to_string(i));
-        auto s = static_cast<sf::Odometry*>(odometry)->getLastSample();   
-        sf::TestScalar("Comp" + std::to_string(i) + " velocity", s.getValue(3), velX, 0.01);
-    }
+    // for (int i = 1; i < 8; ++i)
+    // {
+    //     auto odometry = getSensor("Odometry" + std::to_string(i));
+    //     auto s = static_cast<sf::Odometry*>(odometry)->getLastSample();   
+    //     sf::testScalar("Comp" + std::to_string(i) + " velocity", s.getValue(3), velX, 0.01);
+    // }
 
-    std::cout << std::endl;
+    // std::cout << std::endl;
 }

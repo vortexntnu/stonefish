@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(Stonefish VERSION 1.5.0)
+project(Stonefish VERSION 1.6.0)
 
 # Automatic configuration
 configure_file(version.h.in version.h)
@@ -12,7 +12,7 @@ option(BUILD_TESTS "Build applications testing different features of the Stonefi
 option(EMBED_RESOURCES "Embed internal resources in the library executable" OFF)
 
 # Compile flags
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_FLAGS_DEBUG "-Wall -g -DDEBUG")
 set(CMAKE_CXX_FLAGS_RELEASE "-Wno-stringop-overflow -O3 -DNDEBUG")
@@ -22,7 +22,6 @@ set(OpenGL_GL_PREFERENCE "GLVND")
 find_package(OpenGL REQUIRED)
 find_package(SDL2 REQUIRED)
 find_package(Freetype REQUIRED)
-find_package(OpenMP REQUIRED)
 
 # Generate C++ code from all resource files (optional)
 set(RESOURCES) # This variable stores array of generated resource files
@@ -51,9 +50,7 @@ file(GLOB_RECURSE SOURCES_3RD "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/*.cpp" "${CM
 
 # List dependecies
 set(LIBRARIES ${FREETYPE_LIBRARIES} ${OPENGL_LIBRARIES} ${SDL2_LIBRARIES})
-if(OpenMP_CXX_FOUND)
-    set(LIBRARIES ${LIBRARIES} ${OpenMP_CXX_LIBRARIES})
-endif()
+set(BULLET_FLAGS BT_EULER_DEFAULT_ZYX BT_USE_DOUBLE_PRECISION)
 
 # Define targets
 if(BUILD_TESTS)
@@ -67,8 +64,7 @@ if(BUILD_TESTS)
         ${LIBRARIES}
     )
     target_compile_definitions(Stonefish_test PUBLIC 
-        BT_EULER_DEFAULT_ZYX 
-        BT_USE_DOUBLE_PRECISION
+        ${BULLET_FLAGS}
     )
     if(NOT EMBED_RESOURCES)
         #Sets shader path for the library
@@ -92,8 +88,7 @@ else()
         "$<INSTALL_INTERFACE:$<INSTALL_PREFIX>/include/${CMAKE_PROJECT_NAME}>"
     )
     target_compile_definitions(Stonefish PUBLIC 
-        BT_EULER_DEFAULT_ZYX 
-        BT_USE_DOUBLE_PRECISION
+        ${BULLET_FLAGS}
     )
     if(NOT EMBED_RESOURCES)
         #Sets shader path for the library

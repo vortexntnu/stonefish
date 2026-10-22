@@ -20,11 +20,10 @@
 //  Stonefish
 //
 //  Created by Patryk Cieslak on 17/11/2018.
-//  Copyright (c) 2018-2020 Patryk Cieslak. All rights reserved.
+//  Copyright (c) 2018-2026 Patryk Cieslak. All rights reserved.
 //
 
-#ifndef __Stonefish_OpenGLDataStructs__
-#define __Stonefish_OpenGLDataStructs__
+#pragma once
 
 #include "glad.h"
 #define GLM_FORCE_RADIANS
@@ -33,6 +32,8 @@
 #include <glm/ext.hpp>
 #include <glm/gtx/euler_angles.hpp>
 #include <vector>
+#include <memory>
+#include <variant>
 
 #define Max(a, b)   (((a) > (b)) ? (a) : (b))
 
@@ -127,13 +128,10 @@ namespace sf
             normal = glm::vec3(0.f);
         }
 
-        friend bool operator==(const Vertex& lhs, const Vertex& rhs)
+        bool operator==(const Vertex& other) const
         {
-            if(lhs.pos == rhs.pos 
-                && lhs.normal == rhs.normal)
-                return true;
-            return false;
-        };
+            return pos == other.pos && normal == other.normal;
+        }
     };
 
     //! A structure containing single vertex data.
@@ -148,27 +146,24 @@ namespace sf
             tangent = glm::vec3(0.f);
         }
         
-        friend bool operator==(const TexturableVertex& lhs, const TexturableVertex& rhs)
+        bool operator==(const TexturableVertex& other) const
         {
-            if(lhs.pos == rhs.pos 
-               && lhs.normal == rhs.normal 
-               && lhs.uv == rhs.uv)
-               return true;
-            return false;
-        };
+            return pos == other.pos && normal == other.normal 
+                && uv == other.uv && tangent == other.tangent;
+        }
     };
-    
+
     //! A structure containing single face data.
     struct Face
     {
         GLuint vertexID[3];
         
-        friend bool operator==(const Face& lhs, const Face& rhs)
+        bool operator==(const Face& other) const
         {
-            if(lhs.vertexID[0] == rhs.vertexID[0] && lhs.vertexID[1] == rhs.vertexID[1] && lhs.vertexID[2] == rhs.vertexID[2])
-                return true;
-            return false;
-        };
+            return vertexID[0] == other.vertexID[0]
+                && vertexID[1] == other.vertexID[1]
+                && vertexID[2] == other.vertexID[2];
+        }
     };
     
     //! A structure containing mesh data.
@@ -314,7 +309,27 @@ namespace sf
         }
     };
 
-    
+    //! A structure containing single cable node data.
+    struct CableNode
+    {
+        glm::vec4 posCoord;    //Vertex attrib 0
+        glm::vec3 localTangent;  //Vertex attrib 1
+        
+        CableNode()
+        {
+            posCoord = glm::vec4(0.f);
+            localTangent = glm::vec3(0.f);
+        }
+
+        friend bool operator==(const CableNode& lhs, const CableNode& rhs)
+        {
+            if(lhs.posCoord == rhs.posCoord 
+                && lhs.localTangent == rhs.localTangent)
+                return true;
+            return false;
+        };
+    };
+
     //! A structure containing object data.
     struct Object
     {
@@ -323,6 +338,14 @@ namespace sf
         GLuint vboIndex;
         GLsizei faceCount;
         bool texturable;
+    };
+
+    //! A structure representing a cable.
+    struct Cable
+    {
+        GLuint vao;
+        GLuint vboVertex;
+        GLsizei nodeCount;
     };
     
     //! An enum representing the rendering mode.
@@ -456,7 +479,7 @@ namespace sf
     
     //! An enum used to designate type of helper object to be drawn.
     enum class RenderableType {
-        SOLID = 0, SOLID_CS, MULTIBODY_AXIS,
+        SOLID = 0, CABLE, SOLID_CS, MULTIBODY_AXIS,
         HYDRO_CYLINDER, HYDRO_ELLIPSOID, HYDRO_CS, HYDRO_POINTS, HYDRO_LINES, HYDRO_LINE_STRIP, HYDRO_TRIANGLES,
         SENSOR_CS, SENSOR_LINES, SENSOR_LINE_STRIP, SENSOR_POINTS, ACTUATOR_LINES, JOINT_LINES, PATH_POINTS, PATH_LINE_STRIP,
         FORCE_GRAVITY, FORCE_BUOYANCY, FORCE_LINEAR_DRAG, FORCE_QUADRATIC_DRAG
@@ -501,8 +524,9 @@ namespace sf
         glm::vec3 cor;
         glm::vec3 vel;
         glm::vec3 avel;
-        std::vector<glm::vec3> points;
-		
+        std::variant< std::shared_ptr<std::vector<glm::vec3>>,
+                      std::shared_ptr<std::vector<CableNode>> > data;
+        
         Renderable() 
         {
             type = RenderableType::SOLID;
@@ -513,6 +537,16 @@ namespace sf
             cor = glm::vec3(0.f);
             vel = glm::vec3(0.f);
             avel = glm::vec3(0.f);
+        }
+
+        std::shared_ptr<std::vector<glm::vec3>> getDataAsPoints() const
+        {
+            return std::get<std::shared_ptr<std::vector<glm::vec3>>>(data);
+        }
+
+        std::shared_ptr<std::vector<CableNode>> getDataAsCableNodes() const
+        {
+            return std::get<std::shared_ptr<std::vector<CableNode>>>(data);
         }
 
 		static bool SortByMaterial(const Renderable& r1, const Renderable& r2) 
@@ -595,5 +629,3 @@ namespace sf
      */
     glm::vec3 glVectorFromVector(const Vector3& v);
 }
-
-#endif

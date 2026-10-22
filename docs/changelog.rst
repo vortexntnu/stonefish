@@ -4,6 +4,19 @@ Changelog
 
 The changelog of the library code is presented below. **Breaking changes** were marked with *italics*.
 
+1.6
+===
+
+- Implemented soft body cables
+- Added support for glueing dynamic bodies to robot links
+- Added an option to define the output data format for all sonar types
+- Disabled selection of static planes in the 3D view
+- Significantly improved the speed of loading OBJ files
+- Replaced OpenMP parallelization with a proper implementation of a thread pool
+- Fixed rendering freezeing with high physics computation load
+- Fixed segmentation fault on exit, caused by particle systems
+- *Renamed multiple symbols in the library*
+
 1.5
 ===
 

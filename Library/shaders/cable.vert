@@ -1,4 +1,6 @@
 /*    
+    Copyright (c) 2025 Patryk Cieslak. All rights reserved.
+
     This file is a part of Stonefish.
 
     Stonefish is free software: you can redistribute it and/or modify
@@ -15,25 +17,19 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-//
-//  FluidDynamicsTestApp.h
-//  Stonefish
-//
-//  Created by Patryk Cieslak on 01/07/2024.
-//  Copyright (c) 2024 Patryk Cieslak. All rights reserved.
-//
+#version 330
 
-#ifndef __Stonefish__FluidDynamicsTestApp__
-#define __Stonefish__FluidDynamicsTestApp__
+layout(location = 0) in vec4 pc; // position + coord
+layout(location = 1) in vec3 lt; // local tangent
 
-#include <core/GraphicalSimulationApp.h>
-#include "FluidDynamicsTestManager.h"
+out VS_OUT {
+    float coord;
+    vec3 localTangent;
+} vs_out;
 
-class FluidDynamicsTestApp : public sf::GraphicalSimulationApp
+void main()
 {
-public:
-    FluidDynamicsTestApp(std::string dataDirPath, sf::RenderSettings s, sf::HelperSettings h, FluidDynamicsTestManager* sim);
-    void DoHUD();
-};
-
-#endif
+    gl_Position = vec4(pc.xyz, 1.0);
+    vs_out.coord = pc.w;
+    vs_out.localTangent = lt;
+}

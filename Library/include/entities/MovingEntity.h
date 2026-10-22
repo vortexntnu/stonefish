@@ -20,11 +20,10 @@
 //  Stonefish
 //
 //  Created by Patryk Cieslak on 15/07/20.
-//  Copyright(c) 2025 Patryk Cieslak. All rights reserved.
+//  Copyright (c) 2020-2026 Patryk Cieslak. All rights reserved.
 //
 
-#ifndef __Stonefish_MovingEntity__
-#define __Stonefish_MovingEntity__
+#pragma once
 
 #include "core/MaterialManager.h"
 #include "entities/Entity.h"
@@ -130,7 +129,7 @@ namespace sf
         int getGraphicalObject() const;
 
         //! A method returning the associated particles system.
-        OpenGLOceanParticles* getOceanParticles();
+        const std::shared_ptr<OpenGLOceanParticles>& getOceanParticles();
 
         //! A method returning the rigid body associated with the entity.
         btRigidBody* getRigidBody();
@@ -150,10 +149,8 @@ namespace sf
         int lookId;
         int graObjectId;
         DisplayMode dm;
-        OpenGLOceanParticles* particles;
+        std::shared_ptr<OpenGLOceanParticles> particles;
         
     private:
     };
 }
-
-#endif

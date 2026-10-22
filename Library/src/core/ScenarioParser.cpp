@@ -46,6 +46,7 @@
 #include "entities/forcefields/Uniform.h"
 #include "entities/forcefields/Jet.h"
 #include "entities/FeatherstoneEntity.h"
+#include "entities/CableEntity.h"
 #include "sensors/scalar/Accelerometer.h"
 #include "sensors/scalar/Gyroscope.h"
 #include "sensors/scalar/IMU.h"
@@ -243,7 +244,7 @@ bool ScenarioParser::Parse(std::string filename)
         }
         element = element->NextSiblingElement("dynamic");
     }
-    
+
     //Load robots (optional)
     element = root->FirstChildElement("robot");
     while(element != nullptr)
@@ -254,6 +255,18 @@ bool ScenarioParser::Parse(std::string filename)
             return false;
         }
         element = element->NextSiblingElement("robot");
+    }
+
+    //Load cables (optional)
+    element = root->FirstChildElement("cable");
+    while(element != nullptr)
+    {
+        if(!ParseCable(element))
+        {
+            log.Print(MessageType::ERROR, "Cable not properly defined!");
+            return false;
+        }
+        element = element->NextSiblingElement("cable");
     }
 
     //Load glue (optional)
@@ -593,9 +606,14 @@ bool ScenarioParser::ParseSolver(XMLElement* element)
     sm->setSolverParams(erp, stopErp, erp2, globalDamping, globalFriction, linSleep, angSleep);
     
     unsigned int presc;
-    if((item = element->FirstChildElement("fluid_dynamics")) != nullptr
+    if ((item = element->FirstChildElement("fluid_dynamics")) != nullptr
         && item->QueryAttribute("prescaler", &presc) == XML_SUCCESS)
             sm->setFluidDynamicsPrescaler(presc);
+
+    unsigned int maxPhysicsThreads;
+    if ((item = element->FirstChildElement("multithreading")) != nullptr
+        && item->QueryAttribute("max_physics_threads", &maxPhysicsThreads) == XML_SUCCESS)
+            SimulationApp::getApp()->setMaxPhysicsThreads(maxPhysicsThreads);
 
     return true;
 }
@@ -1609,13 +1627,173 @@ bool ScenarioParser::ParseDynamic(XMLElement* element)
     return true;
 }
 
+bool ScenarioParser::ParseCable(XMLElement* element)
+{
+    //---- Basic ----
+    const char* name = nullptr;
+    if(element->QueryStringAttribute("name", &name) != XML_SUCCESS)
+    {
+        log.Print(MessageType::ERROR, "Name of cable missing!");
+        return false;
+    }
+    std::string cableName(name);
+
+    const char* phyType = nullptr;
+    PhysicsSettings phy;
+    if(element->QueryStringAttribute("physics", &phyType) == XML_SUCCESS)
+    {
+        std::string phyTypeStr(phyType);
+        if(phyTypeStr == "disabled")
+            phy.mode = PhysicsMode::DISABLED;
+        else if(phyTypeStr == "surface")
+            phy.mode = PhysicsMode::SURFACE;
+        else if(phyTypeStr == "floating")
+            phy.mode = PhysicsMode::FLOATING;
+        else if(phyTypeStr == "submerged")
+            phy.mode = PhysicsMode::SUBMERGED;
+        else if(phyTypeStr == "aerodynamic")
+            phy.mode = PhysicsMode::AERODYNAMIC;
+        else 
+        {
+            log.Print(MessageType::ERROR, "Incorrect physics type for cable '%s'!", cableName.c_str());
+            return false;
+        }
+    }
+    element->QueryAttribute("buoyant", &phy.buoyancy);
+    element->QueryAttribute("collisions", &phy.collisions);
+
+    //---- Cable specific ----
+    XMLElement* item;
+    const char* mat = nullptr;
+    const char* look = nullptr;
+    float uvScale = 1.f;
+    
+    //Material
+    Scalar stretchFactor {0};
+    if((item = element->FirstChildElement("material")) == nullptr
+       || item->QueryStringAttribute("name", &mat) != XML_SUCCESS)
+    {
+        log.Print(MessageType::ERROR, "Material of cable '%s' not properly defined!", cableName.c_str());
+        return false;
+    }
+    item->QueryAttribute("stretch_factor", &stretchFactor); //Optional
+
+    //Look
+    if((item = element->FirstChildElement("look")) == nullptr
+       || item->QueryStringAttribute("name", &look) != XML_SUCCESS)
+    {
+        log.Print(MessageType::ERROR, "Look of cable '%s' not properly defined!", cableName.c_str());
+        return false;
+    }
+    item->QueryAttribute("uv_scale", &uvScale); //Optional
+
+    //Dimensions
+    Scalar diameter;
+    unsigned int numSegments;
+    if((item = element->FirstChildElement("geometry")) == nullptr
+        || item->QueryAttribute("diameter", &diameter) != XML_SUCCESS
+        || item->QueryAttribute("number_of_segments", &numSegments) != XML_SUCCESS)
+    {
+        log.Print(MessageType::ERROR, "Geometry of cable '%s' not properly defined!", cableName.c_str());
+        return false;
+    }
+    
+    //Ends
+    const char* firstPosition = nullptr;
+    const char* firstAnchorType = nullptr;
+    if((item = element->FirstChildElement("first_end")) == nullptr
+        || item->QueryStringAttribute("position", &firstPosition) != XML_SUCCESS
+        || item->QueryStringAttribute("anchor", &firstAnchorType) != XML_SUCCESS)
+    {
+        log.Print(MessageType::ERROR, "Definition of the first end of cable '%s' missing!", cableName.c_str());
+        return false;
+    }
+    
+    Vector3 first;
+    if(!ParseVector(firstPosition, first))
+    {
+        log.Print(MessageType::ERROR, "Position of the first end of cable '%s' not properly defined!", cableName.c_str());
+        return false;
+    }
+
+    const char* secondPosition = nullptr;
+    const char* secondAnchorType = nullptr;
+    if((item = element->FirstChildElement("second_end")) == nullptr
+        || item->QueryStringAttribute("position", &secondPosition) != XML_SUCCESS
+        || item->QueryStringAttribute("anchor", &secondAnchorType) != XML_SUCCESS)
+    {
+        log.Print(MessageType::ERROR, "Definition of the second end of cable '%s' missing!", cableName.c_str());
+        return false;
+    }
+    
+    Vector3 second;
+    if(!ParseVector(secondPosition, second))
+    {
+        log.Print(MessageType::ERROR, "Position of the second end of cable '%s' not properly defined!", cableName.c_str());
+        return false;
+    }
+
+    //---- Add to world ----
+    CableEntity* cable = new CableEntity(cableName, phy, first, second, numSegments, diameter, std::string(mat), std::string(look), stretchFactor, uvScale);
+    sm->AddEntity(cable);
+
+    //---- Anchors ----
+    auto parseAnchor = [&](XMLElement* anchorItem, const std::string& anchorTypeStr, sf::CableEnds anchorEnd) -> bool
+    {
+        if (anchorTypeStr == "world")
+        {
+            cable->AttachToWorld(anchorEnd);
+            return true;
+        }
+        else if (anchorTypeStr == "dynamic")
+        {
+            XMLElement* childItem;
+            const char* bodyName;
+            if ((childItem = anchorItem->FirstChildElement("body")) != nullptr
+                && childItem->QueryStringAttribute("name", &bodyName) == XML_SUCCESS)
+            {        
+                SolidEntity* body = dynamic_cast<SolidEntity*>(sm->getEntity(std::string(bodyName)));
+                if (body != nullptr)
+                {
+                    cable->AttachToSolid(anchorEnd, body);
+                    return true;
+                }
+                else
+                {
+                    log.Print(MessageType::ERROR, "Dynamic body '%s', to which the first end of cable '%s' is anchored, not found!", bodyName, cableName.c_str());
+                    return false;
+                }
+            }
+            else 
+            {
+                log.Print(MessageType::ERROR, "Dynamic body, to which the first end of cable '%s' is anchored, not properly defined!", cableName.c_str());
+                return false;
+            }
+        }
+        else if (anchorTypeStr == "free")
+        {
+            return true;
+        }
+        else
+        {
+            log.Print(MessageType::ERROR, "Incorrect anchor type for cable '%s'!", cableName.c_str());
+            return false;
+        }
+    };
+    
+    parseAnchor(element->FirstChildElement("first_end"), std::string(firstAnchorType), sf::CableEnds::FIRST);
+    parseAnchor(element->FirstChildElement("second_end"), std::string(secondAnchorType), sf::CableEnds::SECOND);
+
+    return true;
+}
+
 bool ScenarioParser::ParseSolid(XMLElement* element, SolidEntity*& solid, std::string ns, bool compoundPart)
 {
     //---- Basic ----
     const char* name = nullptr;
     const char* type = nullptr;
     const char* phyType = nullptr;
-    BodyPhysicsSettings phy;
+    PhysicsSettings phy;
     
     if(element->QueryStringAttribute("name", &name) != XML_SUCCESS)
     {
@@ -1633,15 +1811,15 @@ bool ScenarioParser::ParseSolid(XMLElement* element, SolidEntity*& solid, std::s
     {
         std::string phyTypeStr(phyType);
         if(phyTypeStr == "disabled")
-            phy.mode = BodyPhysicsMode::DISABLED;
+            phy.mode = PhysicsMode::DISABLED;
         else if(phyTypeStr == "surface")
-            phy.mode = BodyPhysicsMode::SURFACE;
+            phy.mode = PhysicsMode::SURFACE;
         else if(phyTypeStr == "floating")
-            phy.mode = BodyPhysicsMode::FLOATING;
+            phy.mode = PhysicsMode::FLOATING;
         else if(phyTypeStr == "submerged")
-            phy.mode = BodyPhysicsMode::SUBMERGED;
+            phy.mode = PhysicsMode::SUBMERGED;
         else if(phyTypeStr == "aerodynamic")
-            phy.mode = BodyPhysicsMode::AERODYNAMIC;
+            phy.mode = PhysicsMode::AERODYNAMIC;
         else 
         {
             log.Print(MessageType::ERROR, "Incorrect physics type for rigid body '%s'!", solidName.c_str());
@@ -2114,7 +2292,7 @@ bool ScenarioParser::ParseRobot(XMLElement* element)
                 delete robot;
                 return false;
             }
-            robot->AddLinkActuator(l, robotName + "/" + std::string(linkName), origin);
+            robot->AddLinkActuator(l, robot->getName() + "/" + std::string(linkName), origin);
         }
         item = item->NextSiblingElement("light");
     }
@@ -2143,7 +2321,7 @@ bool ScenarioParser::ParseRobot(XMLElement* element)
                 delete robot;
                 return false;
             }
-            robot->AddComm(comm, robotName + "/" + std::string(linkName), origin);
+            robot->AddComm(comm, robot->getName() + "/" + std::string(linkName), origin);
         }
         item = item->NextSiblingElement("comm");
     }
@@ -2592,10 +2770,10 @@ Actuator* ScenarioParser::ParseActuator(XMLElement* element, const std::string& 
             lookStr = std::string(look);
         }
 
-        BodyPhysicsSettings phy;
+        PhysicsSettings phy;
         phy.collisions = false;
         phy.buoyancy = false;
-        phy.mode = BodyPhysicsMode::SUBMERGED;
+        phy.mode = PhysicsMode::SUBMERGED;
         std::shared_ptr<Polyhedron> propeller = std::make_shared<Polyhedron>(actuatorName + "/Propeller", phy, GetFullPath(std::string(propFile)), 
             propScale, I4(), std::string(mat), lookStr, -1, GeometryApproxType::CYLINDER);
 
@@ -2897,11 +3075,11 @@ Actuator* ScenarioParser::ParseActuator(XMLElement* element, const std::string& 
             lookStr = std::string(look);
         }
 
-        BodyPhysicsSettings phy;
+        PhysicsSettings phy;
         phy.collisions = false;
         phy.buoyancy = false;
         
-        phy.mode = BodyPhysicsMode::SUBMERGED;
+        phy.mode = PhysicsMode::SUBMERGED;
         std::shared_ptr<Polyhedron> propeller = std::make_shared<Polyhedron>(actuatorName + "/Propeller", phy, GetFullPath(std::string(propFile)), propScale, I4(), std::string(mat), lookStr);
         
         if((item = element->FirstChildElement("specs")) != nullptr)
@@ -2970,10 +3148,10 @@ Actuator* ScenarioParser::ParseActuator(XMLElement* element, const std::string& 
             lookStr = std::string(look);
         }
 
-        BodyPhysicsSettings phy;
+        PhysicsSettings phy;
         phy.collisions = false;
         phy.buoyancy = false;
-        phy.mode = BodyPhysicsMode::AERODYNAMIC;
+        phy.mode = PhysicsMode::AERODYNAMIC;
         std::shared_ptr<Polyhedron> propeller = std::make_shared<Polyhedron>(actuatorName + "/Propeller", phy, GetFullPath(std::string(propFile)), propScale, I4(), std::string(mat), lookStr);
         Propeller* p = new Propeller(actuatorName, propeller, diameter, cThrust, cTorque, maxRpm, rightHand, inverted);
         return p;
@@ -3034,8 +3212,8 @@ Actuator* ScenarioParser::ParseActuator(XMLElement* element, const std::string& 
             return nullptr;
         }
 
-        BodyPhysicsSettings phy;
-        phy.mode = BodyPhysicsMode::SUBMERGED;
+        PhysicsSettings phy;
+        phy.mode = PhysicsMode::SUBMERGED;
         phy.collisions = false;
         phy.buoyancy = false;
 
@@ -4179,6 +4357,24 @@ Sensor* ScenarioParser::ParseSensor(XMLElement* element, const std::string& name
             log.Print(MessageType::ERROR, "Specs of sensor '%s' not properly defined!", sensorName.c_str());
             return nullptr;
         }
+        //Optional output format
+        SonarOutputFormat outFormat {SonarOutputFormat::U8};
+        const char* outFormatStr = nullptr;
+        item->QueryStringAttribute("output_format", &outFormatStr);
+        if (outFormatStr != nullptr)
+        {
+            std::string ofs(outFormatStr);
+            if (ofs == "uint8")
+                outFormat = SonarOutputFormat::U8;
+            else if (ofs == "uint16")
+                outFormat = SonarOutputFormat::U16;
+            else if (ofs == "uint32")
+                outFormat = SonarOutputFormat::U32;
+            else if(ofs == "float32")
+                outFormat = SonarOutputFormat::F32;
+            else
+                log.Print(MessageType::WARNING, "Output format of sensor '%s' not recognized - using default (uint8).", sensorName.c_str());
+        }
 
         //Optional settings
         if((item = element->FirstChildElement("settings")) != nullptr)
@@ -4196,7 +4392,7 @@ Sensor* ScenarioParser::ParseSensor(XMLElement* element, const std::string& name
         if((item = element->FirstChildElement("display")) != nullptr)
             ParseColorMap(item, cMap);
         
-        FLS* fls = new FLS(sensorName, nBeams, nBins, hFov, vFov, rangeMin, rangeMax, cMap, rate);
+        FLS* fls = new FLS(sensorName, nBeams, nBins, hFov, vFov, rangeMin, rangeMax, cMap, outFormat, rate);
         fls->setGain(gain);
 
         //Optional noise definition
@@ -4246,6 +4442,24 @@ Sensor* ScenarioParser::ParseSensor(XMLElement* element, const std::string& name
             log.Print(MessageType::ERROR, "Specs of sensor '%s' not properly defined!", sensorName.c_str());
             return nullptr;
         }
+        //Optional output format
+        SonarOutputFormat outFormat {SonarOutputFormat::U8};
+        const char* outFormatStr = nullptr;
+        item->QueryStringAttribute("output_format", &outFormatStr);
+        if (outFormatStr != nullptr)
+        {
+            std::string ofs(outFormatStr);
+            if (ofs == "uint8")
+                outFormat = SonarOutputFormat::U8;
+            else if (ofs == "uint16")
+                outFormat = SonarOutputFormat::U16;
+            else if (ofs == "uint32")
+                outFormat = SonarOutputFormat::U32;
+            else if(ofs == "float32")
+                outFormat = SonarOutputFormat::F32;
+            else
+                log.Print(MessageType::WARNING, "Output format of sensor '%s' not recognized - using default (uint8).", sensorName.c_str());
+        }
 
         //Optional settings
         if((item = element->FirstChildElement("settings")) != nullptr)
@@ -4263,7 +4477,7 @@ Sensor* ScenarioParser::ParseSensor(XMLElement* element, const std::string& name
         if((item = element->FirstChildElement("display")) != nullptr)
             ParseColorMap(item, cMap);
         
-        SSS* sss = new SSS(sensorName, nBins, nLines, vFov, hFov, tilt, rangeMin, rangeMax, cMap, rate);
+        SSS* sss = new SSS(sensorName, nBins, nLines, vFov, hFov, tilt, rangeMin, rangeMax, cMap, outFormat, rate);
         sss->setGain(gain);
 
         //Optional noise definition
@@ -4314,6 +4528,24 @@ Sensor* ScenarioParser::ParseSensor(XMLElement* element, const std::string& name
             log.Print(MessageType::ERROR, "Specs of sensor '%s' not properly defined!", sensorName.c_str());
             return nullptr;
         }
+        //Optional output format
+        SonarOutputFormat outFormat {SonarOutputFormat::U8};
+        const char* outFormatStr = nullptr;
+        item->QueryStringAttribute("output_format", &outFormatStr);
+        if (outFormatStr != nullptr)
+        {
+            std::string ofs(outFormatStr);
+            if (ofs == "uint8")
+                outFormat = SonarOutputFormat::U8;
+            else if (ofs == "uint16")
+                outFormat = SonarOutputFormat::U16;
+            else if (ofs == "uint32")
+                outFormat = SonarOutputFormat::U32;
+            else if(ofs == "float32")
+                outFormat = SonarOutputFormat::F32;
+            else
+                log.Print(MessageType::WARNING, "Output format of sensor '%s' not recognized - using default (uint8).", sensorName.c_str());
+        }
 
         //Optional settings
         if((item = element->FirstChildElement("settings")) != nullptr)
@@ -4335,7 +4567,7 @@ Sensor* ScenarioParser::ParseSensor(XMLElement* element, const std::string& name
         if((item = element->FirstChildElement("display")) != nullptr)
             ParseColorMap(item, cMap);
         
-        MSIS* msis = new MSIS(sensorName, stepAngle, nBins, hFov, vFov, rotMin, rotMax, rangeMin, rangeMax, cMap, rate);
+        MSIS* msis = new MSIS(sensorName, stepAngle, nBins, hFov, vFov, rotMin, rotMax, rangeMin, rangeMax, cMap, outFormat, rate);
         msis->setGain(gain);
 
         //Optional noise definition
@@ -4872,9 +5104,17 @@ FixedJoint* ScenarioParser::ParseGlue(XMLElement* element)
     {
         fix = new FixedJoint(std::string(glueName), robotA->getDynamics(), robotB->getDynamics(), linkIdA, linkIdB);
     }
+    else if(entA != nullptr && entA->getType() == EntityType::SOLID && robotB != nullptr) //Glue robot link to dynamic body
+    {
+        fix = new FixedJoint(std::string(glueName), static_cast<SolidEntity*>(entA), robotB->getDynamics(), linkIdB);
+    }
+    else if(robotA != nullptr && entB != nullptr && entB->getType() == EntityType::SOLID) //Glue robot link to dynamic body
+    {
+        fix = new FixedJoint(std::string(glueName), static_cast<SolidEntity*>(entB), robotA->getDynamics(), linkIdA);
+    }
     else
     {
-        log.Print(MessageType::ERROR, "Glueing dynamic bodies to Featherstone robot links not supported (glue '%s')!", glueName.c_str());
+        log.Print(MessageType::ERROR, "Glue '%s' configuration not supported!", glueName.c_str());
         return nullptr;
     }
     
